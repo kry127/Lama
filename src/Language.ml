@@ -1046,7 +1046,7 @@ module Definition =
         | _               -> name, (m,`Variable value)
       }; *)
 
-      local_var[m][infix]: l:$ name:LIDENT typ:(-":" tl:$ LIDENT)? value:(-"=" exprBasic[infix][Expr.Val])? {
+      local_var[m][infix]: l:$ name:LIDENT typ:(-":" $ UIDENT)? value:(-"=" exprBasic[infix][Expr.Val])? {
         Loc.attach name l#coord;
         (* debug output *)
         let typstr = match typ with | Some (_, x) -> x | None -> "???" in
