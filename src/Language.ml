@@ -1046,9 +1046,12 @@ module Definition =
         | _               -> name, (m,`Variable value)
       }; *)
 
-      local_var[m][infix]: l:$ name:LIDENT typ:(-":" LIDENT)? value:(-"=" exprBasic[infix][Expr.Val])? {
+      local_var[m][infix]: l:$ name:LIDENT typ:(-":" tl:$ LIDENT)? value:(-"=" exprBasic[infix][Expr.Val])? {
         Loc.attach name l#coord;
-        Printf.sprintf "Found type in local variable \"%s\"." name;
+        (* debug output *)
+        let typstr = match typ with | Some (_, x) -> x | None -> "???" in
+        let (typl, typc) = match typ with | Some (ttl, _) -> ttl#coord | None -> l#coord in
+        Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" typstr name typl typc;
         match m, value with
         | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
         | _               -> name, (m,`Variable value)
