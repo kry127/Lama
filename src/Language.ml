@@ -1039,8 +1039,16 @@ module Definition =
           | `Ok infix' -> unopt_mod m, op, name, infix', true
           | `Fail msg  -> report_error ~loc:(Some l#coord) msg
       };
-      local_var[m][infix]: l:$ name:LIDENT value:(-"=" exprBasic[infix][Expr.Val])? {
-        Loc.attach name l#coord;                                                                  
+      (* local_var[m][infix]: l:$ name:LIDENT value:(-"=" exprBasic[infix][Expr.Val])? {
+        Loc.attach name l#coord;
+        match m, value with
+        | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
+        | _               -> name, (m,`Variable value)
+      }; *)
+
+      local_var[m][infix]: l:$ name:LIDENT typ:(-":" LIDENT)? value:(-"=" exprBasic[infix][Expr.Val])? {
+        Loc.attach name l#coord;
+        Printf.sprintf "Found type in local variable \"%s\"." name;
         match m, value with
         | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
         | _               -> name, (m,`Variable value)
