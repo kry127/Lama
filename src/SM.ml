@@ -760,8 +760,8 @@ let compile cmd ((imports, infixes), p) =
          (fun (env, e, funs) ->
            function
            | name, (m, `Fun (args, b))     -> env#add_fun_name name m, e, (name, args, m, b) :: funs
-           | name, (m, `Variable (None, Typing.TAny))     -> env#add_name name m true, e, funs
-           | name, (m, `Variable (Some v, Typing.TAny)) -> env#add_name name m true, Expr.Seq (Expr.Ignore (Expr.Assign (Expr.Ref name, v)), e), funs
+           | name, (m, `Variable (None, _))     -> env#add_name name m true, e, funs
+           | name, (m, `Variable (Some v, _)) -> env#add_name name m true, Expr.Seq (Expr.Ignore (Expr.Assign (Expr.Ref name, v)), e), funs
          )
          (env, e, [])
          (List.rev ds)
