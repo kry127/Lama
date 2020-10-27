@@ -354,15 +354,35 @@ struct
  (* S-expression type (very complicated)             *) | TSexp of string * t list
  (* Reference type (really, it is one-element array) *) | TRef of t
  (* Arrow type (function call)                       *) | TArrow of t * t
- (* Union type (maybe we should use sum type?)       *) | TUnion of t
- (* Empty type (when no value returns from expr)     *) | TVoid of t (* == Union() *)
+ (* Union type (maybe we should use sum type?)       *) | TUnion of t list
+ (* Empty type (when no value returns from expr)     *) | TVoid (* == Union() *)
  (* Syntactic sugar: TOptional(t) = TUnion(t, TVoid) *)
+ with show, html
 
- let parser =
-   let ostap (
-     typeParser
+   (* Note: %"keyword" for keywords, but "[" for regular syntax should be used in parser *)
+   (* TODO what is the difference between Util.list and Util.list0 ? *)
+   (* Answer: list0 also parses empty list :) *)
+   ostap (
+     typeParser: unionParser;
+     anyParser: %"?" {TAny};
+     arrayParser: "[" inner:typeParser "]" {TArr (inner)};
+     sexpParser: label: UIDENT maybeTypelist:(-"(" !(Util.list0)[typeParser] -")")? {
+       match maybeTypelist with
+         | Some(typeList) -> TSexp (label, typeList)
+         | None -> match label with
+           | "Int"  -> TConst
+           | "Str"  -> TString
+           | "Void" -> TVoid
+            (* If this is not ground type, we explicitly add circle brackets *)
+           | sexpLabel -> TSexp(label, [])
+     };
+     arrowParser: premise:(arrayParser | sexpParser | anyParser) maybeConclusion:(-"->" arrowParser)? {
+       match maybeConclusion with
+         | Some (conclusion) -> TArrow (premise, conclusion)
+         | None -> premise
+       };
+     unionParser: arrowParser | typelist:!(Util.listBy)[ostap("|")][arrowParser] {TUnion typelist}
    )
-   in typeParser
 end
 
 (* Simple expressions: syntax and semantics *)
@@ -1077,12 +1097,12 @@ module Definition =
         | _               -> name, (m,`Variable value)
       }; *)
 
-      local_var[m][infix]: l:$ name:LIDENT typ:(-":" $ UIDENT)? value:(-"=" exprBasic[infix][Expr.Val])? {
+      local_var[m][infix]: l:$ name:LIDENT typ:(-":" $ !(Typing.typeParser))? value:(-"=" exprBasic[infix][Expr.Val])? {
         Loc.attach name l#coord;
         (* debug output *)
-        let typstr = match typ with | Some (_, x) -> x | None -> "???" in
+        let typstr = match typ with | Some (_, x) -> x | None -> Typing.TAny in
         let (typl, typc) = match typ with | Some (ttl, _) -> ttl#coord | None -> l#coord in
-        Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" typstr name typl typc;
+        Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" (show(Typing.t) typstr) name typl typc;
         match m, value with
         | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
         | _               -> name, (m,`Variable value)
