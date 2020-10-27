@@ -334,6 +334,37 @@ module Pattern =
 
   end
 
+(* User typing information *)
+module Typing =
+(*
+  This information is not used somehow by interpreter or compiler. The only sole purpose of this structure is to
+  be embedded in AST for further analysis
+
+  Type system: Gradual Typing
+  Most important type relation: ~ (called consistency)
+
+  Think about: should we do recursive types and how to declare them in Lama
+ *)
+struct
+ @type t =
+ (* any type, \forall t. TAny ~ t /\ t ~ TAny        *) | TAny
+ (* integer constant type                            *) | TConst
+ (* array of elements of specified type              *) | TArr of t
+ (* string type                                      *) | TString
+ (* S-expression type (very complicated)             *) | TSexp of string * t list
+ (* Reference type (really, it is one-element array) *) | TRef of t
+ (* Arrow type (function call)                       *) | TArrow of t * t
+ (* Union type (maybe we should use sum type?)       *) | TUnion of t
+ (* Empty type (when no value returns from expr)     *) | TVoid of t (* == Union() *)
+ (* Syntactic sugar: TOptional(t) = TUnion(t, TVoid) *)
+
+ let parser =
+   let ostap (
+     typeParser
+   )
+   in typeParser
+end
+
 (* Simple expressions: syntax and semantics *)
 module Expr =
   struct
@@ -848,7 +879,7 @@ module Expr =
       constexpr:
         n:DECIMAL                                          {Const n}
       | s:STRING                                           {String s}
-      | c:CHAR                                             {Const (Char.code c)}      
+      | c:CHAR                                             {Const (Char.code c)}
       | %"true"                                            {Const 1}
       | %"false"                                           {Const 0}       
       | "[" es:!(Util.list0)[constexpr] "]"                {Array es}
