@@ -359,12 +359,12 @@ struct
  (* Syntactic sugar: TOptional(t) = TUnion(t, TVoid) *)
  with show, html
 
-   (* Note: %"keyword" for keywords, but "[" for regular syntax should be used in parser *)
+   (* Note: %"keyword" for keywords (DO NOT USE IT), but "[" for regular syntax should be used in parser *)
    (* TODO what is the difference between Util.list and Util.list0 ? *)
    (* Answer: list0 also parses empty list :) *)
    ostap (
      typeParser: unionParser;
-     anyParser: %"?" {TAny};
+     anyParser: "?" {TAny};
      arrayParser: "[" inner:typeParser "]" {TArr (inner)};
      sexpParser: label: UIDENT maybeTypelist:(-"(" !(Util.list0)[typeParser] -")")? {
        match maybeTypelist with
@@ -376,12 +376,12 @@ struct
             (* If this is not ground type, we explicitly add circle brackets *)
            | sexpLabel -> TSexp(label, [])
      };
-     arrowParser: premise:(arrayParser | sexpParser | anyParser) maybeConclusion:(-"->" arrowParser)? {
+     arrowParser: premise:(arrayParser | sexpParser | anyParser) maybeConclusion:(-"=>" arrowParser)? {
        match maybeConclusion with
          | Some (conclusion) -> TArrow (premise, conclusion)
          | None -> premise
        };
-     unionParser: arrowParser | typelist:!(Util.listBy)[ostap("|")][arrowParser] {TUnion typelist}
+     unionParser: arrowParser | "Union" "[" typelist:!(Util.listBy)[ostap(",")][arrowParser] "]" {TUnion typelist}
    )
 end
 
@@ -405,7 +405,7 @@ module Expr =
     (* array                      *) | Array     of t list
     (* string                     *) | String    of string
     (* S-expressions              *) | Sexp      of string * t list
-    (* variable                   *) | Var       of string 
+    (* variable                   *) | Var       of string * Typing.t
     (* reference (aka "lvalue")   *) | Ref       of string
     (* binary operator            *) | Binop     of string * t * t
     (* element extraction         *) | Elem      of t * t
@@ -428,7 +428,7 @@ module Expr =
     (* leave a scope              *) | Leave
     (* intrinsic (for evaluation) *) | Intrinsic of (t config, t config) arrow
     (* control (for control flow) *) | Control   of (t config, t * t config) arrow
-    and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t | `Variable of t option]
+    and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t | `Variable of t option * Typing.t]
     with show, html
                            
     let notRef = function Reff -> false | _ -> true
@@ -504,7 +504,7 @@ module Expr =
          let vars, body, bnds =
            List.fold_left
              (fun (vs, bd, bnd) -> function
-              | (name, (_, `Variable value)) -> (name, true) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
+              | (name, (_, `Variable (value, _type))) -> (name, true) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
               | (name, (_, `Fun (args, b)))  -> (name, false) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
              )
              ([], body, [])
@@ -531,7 +531,7 @@ module Expr =
          eval (st, i, o, (Value.of_string @@ Bytes.of_string s) :: vs) Skip k
       | StringVal s ->
          eval conf k (schedule_list [s; Intrinsic (fun (st, i, o, s::vs) -> (st, i, o, (Value.of_string @@ Value.string_val s)::vs))])
-      | Var x ->
+      | Var (x, _) ->
          let v =
            match State.eval st x with
            | Value.FunRef (_, args, body, level) ->
@@ -635,7 +635,7 @@ module Expr =
     | _    -> expr
     
   (* semantics for infixes created in runtime *)
-  let sem s = (fun x atr y -> ignore atr (Call (Var s, [x; y]))), (fun _ -> Val, Val)
+  let sem s = (fun x atr y -> ignore atr (Call (Var (s, Typing.TAny), [x; y]))), (fun _ -> Val, Val)
 
   let sem_init s = fun x atr y ->
     let p x y =
@@ -727,7 +727,7 @@ module Expr =
                 | `Elem i         -> Elem (b, i)
                 | `Len            -> Length b
                 | `Str            -> StringVal b
-                | `Post (f, args) -> Call (Var f, b :: match args with None -> [] | Some args -> args)
+                | `Post (f, args) -> Call (Var (f, TAny), b :: match args with None -> [] | Some args -> args)
                 | `Call args      -> (match b with Sexp _ -> invalid_arg "retry!" | _ -> Call (b, args)) 
               )
               b
@@ -738,7 +738,7 @@ module Expr =
                     | `Elem i        , _    -> Elem (b, i)
                     | `Len           , _    -> Length b
                     | `Str           , _    -> StringVal b
-                    | `Post (f, args), _    -> Call (Var f, b :: match args with None -> [] | Some args -> args)
+                    | `Post (f, args), _    -> Call (Var (f, TAny), b :: match args with None -> [] | Some args -> args)
                     | `Call args     , _    -> (match b with Sexp _ -> invalid_arg "retry!"  | _ -> Call (b, args))
           in
           ignore atr (s res)
@@ -757,10 +757,10 @@ module Expr =
             if s = ":="
             then report_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"")
             else
-              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (Var name)
+              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (Var (name, TAny))
           )            
           else (
-            let name = infix_name s in Loc.attach name l#coord; ignore atr (Var name)
+            let name = infix_name s in Loc.attach name l#coord; ignore atr (Var (name, TAny))
           )
       }
       | l:$ %"fun" "(" args:!(Util.list0)[Pattern.parse] ")"
@@ -773,7 +773,7 @@ module Expr =
                  | Pattern.Wildcard -> env#get_tmp :: args, body
                  | p ->
                     let arg = env#get_tmp in
-                    arg :: args, Case (Var arg, [p, body], l#coord, Weak)
+                    arg :: args, Case (Var (arg, TAny), [p, body], l#coord, Weak)
               )
               args
               ([], body)
@@ -791,7 +791,7 @@ module Expr =
                                                                                                               | None -> []
                                                                                                               | Some args -> args))
                                                                                         }
-      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (Var x) else Ref x}                 
+      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (Var (x, TAny)) else Ref x}
 
       | {isVoid atr} => %"skip" {materialize atr Skip}
 
@@ -818,8 +818,8 @@ module Expr =
                let defs, s =
                  List.fold_right (fun (name, def) (defs, s) ->
                      match def with
-                     | (`Local, `Variable (Some expr)) ->
-                        (name, (`Local, `Variable None)) :: defs, Seq (Ignore (Assign (Ref name, expr)), s)
+                     | (`Local, `Variable (Some expr, _type)) -> (* Store information about the type here *)
+                        (name, (`Local, `Variable (None, _type))) :: defs, Seq (Ignore (Assign (Ref name, expr)), s)
                      | def -> (name, def) :: defs, s)
                    defs
                    ([], s)
@@ -829,15 +829,15 @@ module Expr =
       }
       | %"return" e:basic[infix][Val]? => {isVoid atr} => {Return e}
       | %"case" l:$ e:parse[infix][Val] %"of" bs:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" scope[infix][atr])] %"esac"{Case (e, bs, l#coord, atr)}
-      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (Var "makeLazy", [Lambda ([], e)]))}
-      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda ([name], Call (e, [Var name])))}
+      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (Var ("makeLazy", TAny), [Lambda ([], e)]))}
+      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda ([name], Call (e, [Var (name, TAny)])))}
       | l:$ %"syntax" "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr e}
       | -"(" parse[infix][atr] -")";
       syntax[infix]: ss:!(Util.listBy)[ostap ("|")][syntaxSeq infix] {
         List.fold_right (fun s -> function
-                                  | Var "" -> s
-                                  | acc    -> Call (Var "alt", [s; acc])
-                        ) ss (Var "")
+                                  | Var ("", _) -> s
+                                  | acc         -> Call (Var ("alt", TAny), [s; acc])
+                        ) ss (Var ("", TAny))
       };
       syntaxSeq[infix]: ss:syntaxBinding[infix]+ sema:(-"{" scope[infix][Val] -"}")? {
         let sema, ss =
@@ -849,10 +849,10 @@ module Expr =
                                  match omit with
                                  | None   -> (match p with
                                               | None                           -> let tmp = env#get_tmp in
-                                                                                  ((Var tmp) :: arr, (loc, omit, Some (Pattern.Named (tmp, Pattern.Wildcard)), s) :: ss)
-                                              | Some (Pattern.Named (name, _)) -> ((Var name) :: arr, elem :: ss)
+                                                                                  ((Var (tmp, TAny)) :: arr, (loc, omit, Some (Pattern.Named (tmp, Pattern.Wildcard)), s) :: ss)
+                                              | Some (Pattern.Named (name, _)) -> ((Var (name, TAny)) :: arr, elem :: ss)
                                               | Some p                         -> let tmp = env#get_tmp in
-                                                                                  ((Var tmp) :: arr, (loc, omit, Some (Pattern.Named (tmp, p)), s) :: ss)
+                                                                                  ((Var (tmp, TAny)) :: arr, (loc, omit, Some (Pattern.Named (tmp, p)), s) :: ss)
                                              )
                                  | Some _ -> (arr, elem :: ss)
                  ) ([], []) ss
@@ -866,25 +866,25 @@ module Expr =
                              | Some (Pattern.Named (name, Pattern.Wildcard)) -> (fun body -> Lambda ([name], body))
                              | Some p                                        -> (fun body ->
                                                                                    let arg = env#get_tmp in
-                                                                                   Lambda ([arg], Case (Var arg, [p, body], loc#coord, Val))
+                                                                                   Lambda ([arg], Case (Var (arg, TAny), [p, body], loc#coord, Val))
                                                                                 )
                            in
                            function
-                           | Var "" -> Call (Var (infix_name "@"), [s; make_right sema])
-                           | acc    -> Call (Var "seq", [s; make_right acc])
-                        ) ss (Var "")
+                           | Var ("", _type) -> Call (Var (infix_name "@", _type), [s; make_right sema])
+                           | acc             -> Call (Var ("seq", TAny), [s; make_right acc])
+                        ) ss (Var ("", TAny))
       };
       syntaxBinding[infix]: l:$ omit:"-"? p:(!(Pattern.parse) -"=")? s:syntaxPostfix[infix];
       syntaxPostfix[infix]: s:syntaxPrimary[infix] p:("*" {`Rep0} | "+" {`Rep} | "?" {`Opt})? {
         match p with
         | None       -> s
-        | Some `Opt  -> Call (Var "opt" , [s])
-        | Some `Rep  -> Call (Var "rep" , [s])
-        | Some `Rep0 -> Call (Var "rep0", [s])
+        | Some `Opt  -> Call (Var ("opt", TAny) , [s])
+        | Some `Rep  -> Call (Var ("rep", TAny) , [s])
+        | Some `Rep0 -> Call (Var ("rep0", TAny), [s])
       };
       syntaxPrimary[infix]: l:$ p:LIDENT args:(-"[" !(Util.list0)[parse infix Val] -"]")* {
         Loc.attach p l#coord;
-        List.fold_left (fun acc args -> Call (acc, args)) (Var p) args
+        List.fold_left (fun acc args -> Call (acc, args)) (Var (p, TAny)) args
       }
       | -"(" syntax[infix] -")"
       | -"$(" parse[infix][Val] -")" 
@@ -905,7 +905,7 @@ module Expr =
       | "[" es:!(Util.list0)[constexpr] "]"                {Array es}
       | "{" es:!(Util.list0)[constexpr] "}"                {match es with [] -> Const 0 | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0)}
       | t:UIDENT args:(-"(" !(Util.list)[constexpr] -")")? {Sexp (t, match args with None -> [] | Some args -> args)}
-      | l:$ x:LIDENT                                       {Loc.attach x l#coord; Var x}
+      | l:$ x:LIDENT                                       {Loc.attach x l#coord; Var (x, TAny)}
       | -"(" constexpr -")"
     )
     (* end of the workaround *)
@@ -1055,7 +1055,7 @@ module Definition =
   struct
 
     (* The type for a definition: either a function/infix, or a local variable *)
-    type t = string * [`Fun of string list * Expr.t | `Variable of Expr.t option]
+    type t = string * [`Fun of string list * Expr.t | `Variable of Expr.t option * Typing.t]
 
     let unopt_mod = function None -> `Local | Some m -> m
 
@@ -1063,7 +1063,7 @@ module Definition =
       (* Workaround until Ostap starts to memoize properly *)
       const_var: l:$ name:LIDENT "=" value:!(Expr.constexpr) {
         Loc.attach name l#coord;
-        name, (`Public, `Variable (Some value))
+        name, (`Public, `Variable (Some value, Typing.TAny))
        };
       constdef: %"public" d:!(Util.list (const_var)) ";" {d}
       (* end of the workaround *)
@@ -1099,13 +1099,13 @@ module Definition =
 
       local_var[m][infix]: l:$ name:LIDENT typ:(-":" $ !(Typing.typeParser))? value:(-"=" exprBasic[infix][Expr.Val])? {
         Loc.attach name l#coord;
-        (* debug output *)
         let typstr = match typ with | Some (_, x) -> x | None -> Typing.TAny in
-        let (typl, typc) = match typ with | Some (ttl, _) -> ttl#coord | None -> l#coord in
-        Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" (show(Typing.t) typstr) name typl typc;
+        (* debug output *)
+        (* let (typl, typc) = match typ with | Some (ttl, _) -> ttl#coord | None -> l#coord in
+        Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" (show(Typing.t) typstr) name typl typc; *)
         match m, value with
-        | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
-        | _               -> name, (m,`Variable value)
+          | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
+          | _               -> name, (m,`Variable (value, typstr))
       };
 
       parse[infix]:
@@ -1125,7 +1125,7 @@ module Definition =
                      | Pattern.Wildcard -> env#get_tmp :: args, body
                      | p ->
                         let arg = env#get_tmp in
-                        arg :: args, Expr.Case (Expr.Var arg, [p, body], l#coord, Expr.Weak)
+                        arg :: args, Expr.Case (Expr.Var (arg, TAny), [p, body], l#coord, Expr.Weak)
                    )
                    args
                    ([], body)

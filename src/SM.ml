@@ -468,8 +468,8 @@ object (self : 'self)
                    List.fold_left
                      (fun env -> function
                       | `Variable name -> env#add_name     name `Extern true
-                      | `Fun name      -> env#add_fun_name name `Extern 
-                      | _              -> env
+                      | `Fun name           -> env#add_fun_name name `Extern
+                      | _                   -> env
                      )
                      env
                      intfs
@@ -760,8 +760,8 @@ let compile cmd ((imports, infixes), p) =
          (fun (env, e, funs) ->
            function
            | name, (m, `Fun (args, b))     -> env#add_fun_name name m, e, (name, args, m, b) :: funs
-           | name, (m, `Variable None)     -> env#add_name name m true, e, funs
-           | name, (m, `Variable (Some v)) -> env#add_name name m true, Expr.Seq (Expr.Ignore (Expr.Assign (Expr.Ref name, v)), e), funs
+           | name, (m, `Variable (None, Typing.TAny))     -> env#add_name name m true, e, funs
+           | name, (m, `Variable (Some v, Typing.TAny)) -> env#add_name name m true, Expr.Seq (Expr.Ignore (Expr.Assign (Expr.Ref name, v)), e), funs
          )
          (env, e, [])
          (List.rev ds)
@@ -776,7 +776,7 @@ let compile cmd ((imports, infixes), p) =
                                add_code (compile_expr tail ls env s) ls false [DROP]                             
 
   | Expr.ElemRef (x, i)     -> compile_list tail l env [x; i]
-  | Expr.Var      x         -> let env, line = env#gen_line x in
+  | Expr.Var     (x, _)     -> let env, line = env#gen_line x in
                                let env, acc  = env#lookup x in
                                (match acc with Value.Fun name -> env#register_call name, false, line @ [PROTO (name, env#current_function)] | _ -> env, false, line @ [LD acc])
   | Expr.Ref      x         -> let env, line = env#gen_line x in
@@ -788,7 +788,7 @@ let compile cmd ((imports, infixes), p) =
                                
   | Expr.Call (f, args)     -> let lcall, env = env#get_label in
                                (match f with
-                                | Expr.Var name ->
+                                | Expr.Var (name, _) ->
                                    let env, line = env#gen_line name in
                                    let env, acc  = env#lookup name in
                                    (match acc with
