@@ -193,14 +193,14 @@ module State =
            (if l >= n then st'' else st), l+1
       in
       fst @@ inner n st
-                    
+
     (* Undefined state *)
     let undefined x =
       report_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x))
 
     (* Create a state from bindings list *)
     let from_list l = fun x -> try List.assoc x l with Not_found -> report_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x))
-                             
+
     (* Bind a variable to a value in a state *)
     let bind x v s = fun y -> if x = y then v else s y
 
@@ -212,11 +212,11 @@ module State =
 
     (* Scope operation: checks if a name designates variable *)
     let is_var x s = try List.assoc x s with Not_found -> false
-                    
+
     (* Update: non-destructively "modifies" the state s by binding the variable x
        to value v and returns the new state w.r.t. a scope
     *)
-    let update x v s = 
+    let update x v s =
       let rec inner = function
       | I -> report_error "uninitialized state"
       | G (scope, s) ->
@@ -230,12 +230,12 @@ module State =
               else report_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" does not designate a variable" (Subst.subst x))
          else L (scope, s, inner enclosing)
       in
-      inner s      
+      inner s
 
     (* Evals a variable in a state w.r.t. a scope *)
     let rec eval s x =
       match s with
-      | I                       -> report_error "uninitialized state"           
+      | I                       -> report_error "uninitialized state"
       | G (_, s)                -> s x
       | L (scope, s, enclosing) -> if in_scope x scope then s x else eval enclosing x
 
@@ -248,7 +248,7 @@ module State =
       in
       let g = get st in
       let rec recurse = function
-      | I               -> g 
+      | I               -> g
       | L (scope, s, e) -> L (scope, s, recurse e)
       | G _             -> g
       in
@@ -257,7 +257,7 @@ module State =
     (* Creates a new scope, based on a given state *)
     let rec enter st xs =
       match st with
-      | I           -> report_error "uninitialized state"                   
+      | I           -> report_error "uninitialized state"
       | G _         -> L (xs, undefined, st)
       | L (_, _, e) -> enter e xs
 
@@ -273,7 +273,7 @@ module State =
     (* Observe a variable in a state and print it to stderr *)
     let observe st x =
       Printf.eprintf "%s=%s\n%!" x (try show (Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") @@ eval st x with _ -> "undefined")
-      
+
   end
 
 (* Patterns *)
@@ -353,7 +353,7 @@ struct
  (* string type                                      *) | TString
  (* S-expression type (very complicated)             *) | TSexp of string * t list
  (* Reference type (really, it is one-element array) *) | TRef of t
- (* Arrow type (function call)                       *) | TArrow of t * t
+ (* Arrow type (function call)                       *) | TLambda of t list * t
  (* Union type (maybe we should use sum type?)       *) | TUnion of t list
  (* Empty type (when no value returns from expr)     *) | TVoid (* == Union() *)
  (* Syntactic sugar: TOptional(t) = TUnion(t, TVoid) *)
@@ -363,7 +363,7 @@ struct
    (* TODO what is the difference between Util.list and Util.list0 ? *)
    (* Answer: list0 also parses empty list :) *)
    ostap (
-     typeParser: unionParser;
+     typeParser: unionParser | arrowParser | sexpParser | arrayParser | anyParser;
      anyParser: "?" {TAny};
      arrayParser: "[" inner:typeParser "]" {TArr (inner)};
      sexpParser: label: UIDENT maybeTypelist:(-"(" !(Util.list0)[typeParser] -")")? {
@@ -376,13 +376,15 @@ struct
             (* If this is not ground type, we explicitly add circle brackets *)
            | sexpLabel -> TSexp(label, [])
      };
-     arrowParser: premise:(arrayParser | sexpParser | anyParser) maybeConclusion:(-"=>" arrowParser)? {
-       match maybeConclusion with
-         | Some (conclusion) -> TArrow (premise, conclusion)
-         | None -> premise
+     arrowParser: -"(" premise:!(Util.list0By)[ostap(",")][typeParser] -")" -"=>" conclusion:typeParser {
+         TLambda (premise, conclusion)
        };
-     unionParser: arrowParser | "Union" "[" typelist:!(Util.listBy)[ostap(",")][arrowParser] "]" {TUnion typelist}
+     unionParser: "Union" "[" typelist:!(Util.listBy)[ostap(",")][typeParser] "]" {TUnion typelist}
    )
+
+   let etaExpand _type = match _type with
+     | TLambda (arg1::args, result) -> TLambda(arg1::[], TLambda (args, result))
+     | _                       -> _type
 end
 
 (* Simple expressions: syntax and semantics *)
@@ -424,12 +426,18 @@ module Expr =
     (* ignore a value             *) | Ignore    of t
     (* unit value                 *) | Unit
     (* entering the scope         *) | Scope     of (string * decl) list * t 
-    (* lambda expression          *) | Lambda    of string list * t
+    (* lambda expression          *) | Lambda    of string list * t * Typing.t
     (* leave a scope              *) | Leave
     (* intrinsic (for evaluation) *) | Intrinsic of (t config, t config) arrow
     (* control (for control flow) *) | Control   of (t config, t * t config) arrow
-    and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t | `Variable of t option * Typing.t]
+    and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t * Typing.t | `Variable of t option * Typing.t]
     with show, html
+
+   (* Function for ad-hoc type extracting from the Expr.t *)
+   let extractType texpr = match texpr with
+     | Var    (_, _type)    -> _type
+     | Lambda (_, _, _type) -> _type
+     | _                    -> Typing.TAny
                            
     let notRef = function Reff -> false | _ -> true
     let isVoid = function Void | Weak -> true  | _ -> false
@@ -498,14 +506,14 @@ module Expr =
         Printf.eprintf "End Values\n%!"        
       in
       match expr with
-      | Lambda (args, body) ->
+      | Lambda (args, body, _) ->
          eval (st, i, o, Value.Closure (args, body, [|st|]) :: vs) Skip k        
       | Scope (defs, body) ->
          let vars, body, bnds =
            List.fold_left
              (fun (vs, bd, bnd) -> function
               | (name, (_, `Variable (value, _type))) -> (name, true) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
-              | (name, (_, `Fun (args, b)))  -> (name, false) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
+              | (name, (_, `Fun (args, b, _)))  -> (name, false) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
              )
              ([], body, [])
              (List.rev @@
@@ -764,6 +772,7 @@ module Expr =
           )
       }
       | l:$ %"fun" "(" args:!(Util.list0)[Pattern.parse] ")"
+           typ:(-":" $ !(Typing.typeParser))?
            "{" body:scope[infix][Weak] "}"=> {notRef atr} :: (not_a_reference l) => {
           let args, body =
             List.fold_right
@@ -778,7 +787,8 @@ module Expr =
               args
               ([], body)
           in
-          ignore atr (Lambda (args, body))
+          let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
+          ignore atr (Lambda (args, body, typeNode))
       }
 
       | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (Array es)}
@@ -829,8 +839,8 @@ module Expr =
       }
       | %"return" e:basic[infix][Val]? => {isVoid atr} => {Return e}
       | %"case" l:$ e:parse[infix][Val] %"of" bs:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" scope[infix][atr])] %"esac"{Case (e, bs, l#coord, atr)}
-      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (Var ("makeLazy", TAny), [Lambda ([], e)]))}
-      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda ([name], Call (e, [Var (name, TAny)])))}
+      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (Var ("makeLazy", TAny), [Lambda ([], e, TLambda ([], extractType e))]))}
+      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda ([name], Call (e, [Var (name, TAny)]), Typing.etaExpand (extractType e)))}
       | l:$ %"syntax" "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr e}
       | -"(" parse[infix][atr] -")";
       syntax[infix]: ss:!(Util.listBy)[ostap ("|")][syntaxSeq infix] {
@@ -862,11 +872,11 @@ module Expr =
         List.fold_right (fun (loc, _, p, s) ->
                            let make_right =
                              match p with
-                             | None                                          -> (fun body -> Lambda ([env#get_tmp], body))
-                             | Some (Pattern.Named (name, Pattern.Wildcard)) -> (fun body -> Lambda ([name], body))
+                             | None                                          -> (fun body -> Lambda ([env#get_tmp], body, TAny))
+                             | Some (Pattern.Named (name, Pattern.Wildcard)) -> (fun body -> Lambda ([name], body, TAny))
                              | Some p                                        -> (fun body ->
                                                                                    let arg = env#get_tmp in
-                                                                                   Lambda ([arg], Case (Var (arg, TAny), [p, body], loc#coord, Val))
+                                                                                   Lambda ([arg], Case (Var (arg, TAny), [p, body], loc#coord, Val), TAny)
                                                                                 )
                            in
                            function
@@ -1055,7 +1065,7 @@ module Definition =
   struct
 
     (* The type for a definition: either a function/infix, or a local variable *)
-    type t = string * [`Fun of string list * Expr.t | `Variable of Expr.t option * Typing.t]
+    type t = string * [`Fun of string list * Expr.t * Typing.t | `Variable of Expr.t option * Typing.t]
 
     let unopt_mod = function None -> `Local | Some m -> m
 
@@ -1099,19 +1109,20 @@ module Definition =
 
       local_var[m][infix]: l:$ name:LIDENT typ:(-":" $ !(Typing.typeParser))? value:(-"=" exprBasic[infix][Expr.Val])? {
         Loc.attach name l#coord;
-        let typstr = match typ with | Some (_, x) -> x | None -> Typing.TAny in
+        let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
         (* debug output *)
         (* let (typl, typc) = match typ with | Some (ttl, _) -> ttl#coord | None -> l#coord in
-        Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" (show(Typing.t) typstr) name typl typc; *)
+        Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" (show(Typing.t) typeNode) name typl typc; *)
         match m, value with
           | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
-          | _               -> name, (m,`Variable (value, typstr))
+          | _               -> name, (m,`Variable (value, typeNode))
       };
 
       parse[infix]:
         m:(%"local" {`Local} | %"public" e:(%"external")? {match e with None -> `Public | Some _ -> `PublicExtern} | %"external" {`Extern})
           locs:!(Util.list (local_var m infix)) next:";" {locs, infix}
     | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[Pattern.parse] -")"
+           -typ:(-":" $ !(Typing.typeParser))?
           (l:$ "{" body:exprScope[infix'][Expr.Weak] "}" {
             if flag && List.length args != 2 then report_error ~loc:(Some l#coord) "infix operator should accept two arguments";
             match m with
@@ -1130,11 +1141,12 @@ module Definition =
                    args
                    ([], body)
                in
-               [(name, (m, `Fun (args, body)))], infix'
+               let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
+               [(name, (m, `Fun (args, body, typeNode)))], infix'
          } |
          l:$ ";" {
             match m with
-            | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix' 
+            | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip, Typing.TAny)))], infix'
             | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)
          })           
     ) in parse

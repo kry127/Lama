@@ -746,7 +746,7 @@ let compile cmd ((imports, infixes), p) =
      let env, flag2, s2 = compile_list tail  l   env es in
      add_code (env, flag1, s1) les flag2 s2
   and compile_expr tail l env = function
-  | Expr.Lambda (args, b) ->
+  | Expr.Lambda (args, b, _) ->
      let env, lines = List.fold_left (fun (env, acc) name -> let env, ln = env#gen_line name in env, acc @ ln) (env, []) args in 
      let env, name  = env#add_lambda args b in
      env#register_call name, false, lines @ [PROTO (name, env#current_function)] 
@@ -759,7 +759,7 @@ let compile cmd ((imports, infixes), p) =
        List.fold_left
          (fun (env, e, funs) ->
            function
-           | name, (m, `Fun (args, b))     -> env#add_fun_name name m, e, (name, args, m, b) :: funs
+           | name, (m, `Fun (args, b, _))     -> env#add_fun_name name m, e, (name, args, m, b) :: funs
            | name, (m, `Variable (None, _))     -> env#add_name name m true, e, funs
            | name, (m, `Variable (Some v, _)) -> env#add_name name m true, Expr.Seq (Expr.Ignore (Expr.Assign (Expr.Ref name, v)), e), funs
          )
