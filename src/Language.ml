@@ -376,7 +376,7 @@ struct
             (* If this is not ground type, we explicitly add circle brackets *)
            | sexpLabel -> TSexp(label, [])
      };
-     arrowParser: -"(" premise:!(Util.list0By)[ostap(",")][typeParser] -")" -"=>" conclusion:typeParser {
+     arrowParser: premise:!(Util.list0By)[ostap("->")][typeParser] -"~>" conclusion:typeParser {
          TLambda (premise, conclusion)
        };
      unionParser: "Union" "[" typelist:!(Util.listBy)[ostap(",")][typeParser] "]" {TUnion typelist}
