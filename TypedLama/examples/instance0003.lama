@@ -1,0 +1,23 @@
+-- we cannot specify function parameter type, because of pattern-matching sugar
+public fun id (x : Int) {
+  x
+}
+
+-- instead, we should annotate type of function in postfix notation
+public fun idTyped (x) : (Int) => Int {
+  x
+}
+
+public fun kCombinatorTyped (x, y) : (Int, String) => Int {
+  x
+}
+
+-- but how we would still type pattern-matching?
+-- Answer: patterns explicitly specify the type... O_o
+public fun id2 (Abc (x, y)) : ? {
+  x
+}
+
+
+printf("%d\n", idTyped(4));
+printf("%d\n", id2(Abc(3, 5)))

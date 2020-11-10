@@ -1,0 +1,6 @@
+{local i : Int, s: (Int) => Int = 0;
+ for i := 0, i < 100, i := i + 1 do
+   s := s + i
+ od;
+ s
+}

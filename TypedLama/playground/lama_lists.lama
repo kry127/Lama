@@ -1,0 +1,25 @@
+import List;
+import Fun;
+import Ref;
+
+
+local list = singleton(ST("z")) +++ {2, 3} +++ {4, 5, 6} +++ {} +++ {7} +++ {} +++ {8};
+local simple_array_of_int = [1, 2, 3, 4];
+local simple_array_of_strings = ["abc", "def", "ghi"];
+local simple_array_heterogenous = [1, "Y", 5, 0, "xyzzy"];
+local array_inception = [1, "a",
+                         simple_array_of_int,
+                         simple_array_of_strings,
+                         simple_array_heterogenous];
+                         
+local s_expr_example = Someexpr (1, "abc", ["lol", "kek"]);
+    
+printf ("Case-expression: %s\n", case A (1, 2, 3) of A (x, y, z) -> z esac.string);
+printf ("While-expression: %s\n", {local i, s = 0;
+                                   for i := 0, i < 10, i := i + 1 do
+                                     s := s + i
+                                   od; s}.string);
+case list of v1:v2:vs -> printf("%s\n", v2.string) esac;
+printf("%s\n", list.string);
+printf("%s\n", {}.string);
+printf("%s\n", array_inception.string)

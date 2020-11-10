@@ -1,0 +1,55 @@
+local regularValue = 5;
+fun lazyValue() {
+  5
+}
+
+fun combinatorK(a, b) {
+  a
+}
+
+fun combinatorKdash(a, b) {
+  b
+}
+
+fun f(a, b) {
+  fun f(x, y) {
+    printf("a: %s, b: %s, x: %s, y: %s\n", a.string, b.string, x.string, y.string);
+    Unit
+  }
+  f
+}
+
+local etaCombinatorKdash = eta (combinatorKdash);
+
+printf("Regular value: %s\n", regularValue.string);
+printf("Lazy value closure: %s, lazy value: %s\n", lazyValue.string, lazyValue().string);
+
+printf("combinatorK closure: %s\n", combinatorK.string);
+printf("combinatorK(): %s\n",       combinatorK().string);
+printf("combinatorK(2): %s\n",      combinatorK(2).string);
+printf("combinatorK(5, 3): %s\n",   combinatorK(5, 3).string);
+
+
+printf("combinatorKdash closure: %s\n", combinatorKdash.string);
+printf("combinatorKdash(): %s\n",       combinatorKdash().string);
+printf("combinatorKdash(8): %s\n",      combinatorKdash(8).string);
+printf("combinatorKdash(9, 6): %s\n",   combinatorKdash(9, 6).string);
+printf("[fantom substitude] $0=fmt, $1=%s, $2=combinatorKdash(13): %s\n", 238.string, combinatorKdash(13).string);
+
+
+printf("etaCombinatorKdash closure: %s\n", etaCombinatorKdash.string);
+printf("etaCombinatorKdash(): %s\n",       etaCombinatorKdash().string);
+printf("etaCombinatorKdash(24): %s\n",      etaCombinatorKdash(24).string);
+printf("etaCombinatorKdash(7, 22): %s\n",   etaCombinatorKdash(7, 22).string);
+printf("[fantom substitude] $0=fmt, $1=%s, $2=etaCombinatorKdash(86): %s\n", 95.string, etaCombinatorKdash(86).string);
+printf("$0=fmt, $1=%s, $2=etaCombinatorKdash(103, 852): %s\n", 173.string, combinatorKdash(103, 852).string);
+
+printf("\n\n");
+f(1, 2)(3, 4);
+f(1, 2)(3);
+f(1, 2)();
+f(1)(3, 4);
+f()(3, 4);
+f(1)(3);
+f()(3);
+Unit

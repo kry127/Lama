@@ -1,0 +1,67 @@
+import Fun;
+import Ref;
+
+
+(* Naive implementation of Fix *)
+public fun fix_1 (f) {
+  f (fix_1(f))
+}
+
+(* This is the fix from Fun, but with debug output of "x" *)
+public fun fix_2 (f) {
+  local knot = ref ({});
+  
+  knot ::= fun (x) {printf("Fix x=%s\n", x.string); f (deref (knot)) (x)};  
+
+  deref (knot)
+}
+
+(* This is the fix without explicit pass of 'x' argument *)
+public fun fix_3 (f) {
+  local knot = ref ({});
+  
+  knot ::= fun () {f (deref (knot)) ()};  
+
+  deref (knot)
+}
+
+
+
+local factorial = fix_3 (fun (f) {
+      fun (n) {
+       if n == 1 then 1 else n * f (n - 1) fi
+      }
+    });
+    
+(* Haskell:
+import Control.Monad.Fix
+binom = fix (\f m n -> if n > m then 0
+                       else if n < 0 then 0
+                       else if m == 0 then 1
+                       else (f (m-1) (n-1)) + (f (m-1) n)
+            )
+*)
+
+local binomial = fix_3 (fun (f) {
+      fun (m, n) {
+       if n > m then 0
+       elif n < 0 then 0
+       elif m == 0 then 1
+       else (f (m-1, n-1)) + (f (m-1, n))
+       fi
+      }
+    });
+    
+(* Haskell:
+import Control.Monad.Fix
+fix (const "hello")
+*)
+local fixhello = fix_3 (fun (f) { fun () {"hello"} });
+
+(* NOTE: using ordinary 'fix' will crush 'fixhello', because there is no accepted arguments *)
+
+    
+printf("\n");
+printf("factorial(6)=%d\n", factorial(6));
+printf("binomial(5, 2)=%d\n", binomial(5, 2));
+printf("hello=%s\n", fixhello())
