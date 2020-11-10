@@ -776,7 +776,7 @@ module Expr =
           )
       }
       | l:$ %"fun" "(" args:!(Util.list0)[Pattern.parse] ")"
-           typ:(-":" $ !(Typing.typeParser))?
+           typ:(-"::" $ !(Typing.typeParser))?
            "{" body:scope[infix][Weak] "}"=> {notRef atr} :: (not_a_reference l) => {
           let args, body =
             List.fold_right
