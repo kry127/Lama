@@ -363,6 +363,7 @@ struct
    (* TODO what is the difference between Util.list and Util.list0 ? *)
    (* Answer: list0 also parses empty list :) *)
    ostap (
+     (* Use "typeParser" to parse type information *)
      typeParser: unionParser | arrowParser | sexpParser | arrayParser | anyParser;
      anyParser: "?" {TAny};
      arrayParser: "[" inner:typeParser "]" {TArr (inner)};
@@ -430,7 +431,9 @@ module Expr =
     (* leave a scope              *) | Leave
     (* intrinsic (for evaluation) *) | Intrinsic of (t config, t config) arrow
     (* control (for control flow) *) | Control   of (t config, t * t config) arrow
-    and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t * Typing.t | `Variable of t option * Typing.t]
+    and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t * Typing.t
+                                                                | `Variable of t option * Typing.t
+                                                                | `UseWithType of Typing.t]
     with show, html
 
    (* Function for ad-hoc type extracting from the Expr.t *)
@@ -514,6 +517,7 @@ module Expr =
              (fun (vs, bd, bnd) -> function
               | (name, (_, `Variable (value, _type))) -> (name, true) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
               | (name, (_, `Fun (args, b, _)))  -> (name, false) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
+              | (name, (_, `UseWithType _)) -> vs, bd, bnd
              )
              ([], body, [])
              (List.rev @@
@@ -1065,7 +1069,7 @@ module Definition =
   struct
 
     (* The type for a definition: either a function/infix, or a local variable *)
-    type t = string * [`Fun of string list * Expr.t * Typing.t | `Variable of Expr.t option * Typing.t]
+    type t = string * [`Fun of string list * Expr.t * Typing.t | `Variable of Expr.t option * Typing.t | `UseWithType of Typing.t]
 
     let unopt_mod = function None -> `Local | Some m -> m
 
@@ -1121,8 +1125,10 @@ module Definition =
       parse[infix]:
         m:(%"local" {`Local} | %"public" e:(%"external")? {match e with None -> `Public | Some _ -> `PublicExtern} | %"external" {`Extern})
           locs:!(Util.list (local_var m infix)) next:";" {locs, infix}
+     (* Use "useTypeParser" to parse type assignments *)
+    |  name: LIDENT -"::" typ: !(Typing.typeParser) -";" {[(name, (`Local, `UseWithType (typ)))], infix}
     | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[Pattern.parse] -")"
-           -typ:(-":" $ !(Typing.typeParser))?
+           -typ:(-"::" $ !(Typing.typeParser))?
           (l:$ "{" body:exprScope[infix'][Expr.Weak] "}" {
             if flag && List.length args != 2 then report_error ~loc:(Some l#coord) "infix operator should accept two arguments";
             match m with
@@ -1169,6 +1175,7 @@ module Interface =
                 (match item with
                  | `Fun _      -> append "F,"; append name; append ";\n"
                  | `Variable _ -> append "V,"; append name; append ";\n"
+                 | `UseWithType _ -> ()
                 )
              | _ -> ()
             )
