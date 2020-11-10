@@ -1111,7 +1111,7 @@ module Definition =
         | _               -> name, (m,`Variable value)
       }; *)
 
-      local_var[m][infix]: l:$ name:LIDENT typ:(-":" $ !(Typing.typeParser))? value:(-"=" exprBasic[infix][Expr.Val])? {
+      local_var[m][infix]: l:$ name:LIDENT typ:(-"::" $ !(Typing.typeParser))? value:(-"=" exprBasic[infix][Expr.Val])? {
         Loc.attach name l#coord;
         let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
         (* debug output *)
