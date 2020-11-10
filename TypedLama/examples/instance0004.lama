@@ -1,28 +1,28 @@
 -- check parsing of union and arrows
-local x : Union[Int, Union[Str, Int]] = 1;
-local z : (Union[Int, Str]) => Union[Str, Int];
-local y : Union[(Int) => Str, (Str) => Int];
+local x :: Union[Int, Union[Str, Int]] = 1;
+local z :: Union[Int, Str] ~> Union[Str, Int];
+local y :: Union[Int ~> Str, Str ~> Int];
 
 -- check parsing of arrays
-local arr1 : [?];
-local arr2 : [Union[Str, Int]];
-local arr3 : Union[[Str], [Int], ([Str]) => [Int]];
-local arr4 : [Int] = [1, 4, 6, 2, 6, 2, 5, 6, 3];
-local arr5 : [Str] = ["here", "is", "JOHNNY"];
+local arr1 :: [?];
+local arr2 :: [Union[Str, Int]];
+local arr3 :: Union[[Str], [Int], [Str] ~> [Int]];
+local arr4 :: [Int] = [1, 4, 6, 2, 6, 2, 5, 6, 3];
+local arr5 :: [Str] = ["here", "is", "JOHNNY"];
 
 -- sexpressions
-local sexp1 : X;
-local sexp2 : Y(?, Str, Whois(Str)) = Y(Combinator, "xyzzy", Whois("Yandex"));
-local sexp3 : Union[X, X()]; -- This is the same types
-local sexp4 : Union[Str, Str()]; -- Str is string, Str() is Sexp
+local sexp1 :: X;
+local sexp2 :: Y(?, Str, Whois(Str)) = Y(Combinator, "xyzzy", Whois("Yandex"));
+local sexp3 :: Union[X, X()]; -- This is the same types
+local sexp4 :: Union[Str, Str()]; -- Str is string, Str() is Sexp
 
 -- functions
-local f1 : (Int) => Int = fun(x) {2 * x};
-local f2 : () => (Int) => ?
+local f1 :: Int ~> Int = fun(x) {2 * x};
+local f2 :: ~> Int ~> ? -- we have a problem -- if first closure accepts zero arguments, then the lhs of '~>' is empty :(
   = fun() {
-      fun internal(x) : (Int) => ? {
+      fun internal(x) :: Int ~> ? {
         XYZ
       }
       internal
     };
-local f3 = eta f1; -- obviously, f3 has type () => (Int) => Int, but should lamac provide this info?
+local f3 = eta f1; -- obviously, f3 has type () ~> Int ~> Int, but should lamac provide this info?

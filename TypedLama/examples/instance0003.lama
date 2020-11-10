@@ -4,17 +4,17 @@ public fun id (x : Int) {
 }
 
 -- instead, we should annotate type of function in postfix notation
-public fun idTyped (x) : (Int) => Int {
+public fun idTyped (x) :: Int ~> Int {
   x
 }
 
-public fun kCombinatorTyped (x, y) : (Int, String) => Int {
+public fun kCombinatorTyped (x, y) :: Int -> String ~> Int {
   x
 }
 
 -- but how we would still type pattern-matching?
 -- Answer: patterns explicitly specify the type... O_o
-public fun id2 (Abc (x, y)) : ? {
+public fun id2 (Abc (x, y)) :: ? {
   x
 }
 

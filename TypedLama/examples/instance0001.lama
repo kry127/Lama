@@ -9,16 +9,16 @@ import List;
 
 
 local x = 1; -- Type(x)=?, no inference is performing, although Type(1)=int.
-local y : Int = 1; -- Type(y)=int
-public w : Str = "kek"; -- Type(y)=string, but public
+local y  :: Int = 1; -- Type(y)=int
+public w :: Str = "kek"; -- Type(y)=string, but public
 
 local a = 3, b = 4; -- we can have multiple definitions!
-local p1left : Int = 0, p1right       = "hello";
-local p2left       = 0, p2right : Str = "hello";
-local p3left : Int = 0, p3right : Str = "hello";
+local p1left :: Int = 0, p1right        = "hello";
+local p2left        = 0, p2right :: Str = "hello";
+local p3left :: Int = 0, p3right :: Str = "hello";
 
-local promise : (Int) => Str;
+local promise :: Int ~> Str;
 
 -- Type(1) = Int, but Type(z) = Str -- type error, because int ~! str
 -- uncomment next line to get type error:
--- local z : Str = 1;
+-- local z :: Str = 1;
