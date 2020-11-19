@@ -10,7 +10,7 @@ fun g(b) {
 -- scope 1
 {
   -- здесь проверка, что функцию можно так использовать
-  f :: Int ~> String;
+  f :: Int ~> Str;
   g :: Int ~> Int;
 
   f(g(0)) -- здесь проверка, что функция исопльзована корректно
@@ -22,7 +22,7 @@ fun g(b) {
 -- scope 2
 
 {
-  f :: Double ~> String;
+  f :: Double ~> Str;
   g :: Double ~> Double;
 
 
