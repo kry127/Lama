@@ -18,7 +18,7 @@ local sexp4 :: Union[Str, Str()]; -- Str is string, Str() is Sexp
 
 -- functions
 local f1 :: Int ~> Int = fun(x) {2 * x};
-local f2 :: ~> Int ~> ? -- we have a problem -- if first closure accepts zero arguments, then the lhs of '~>' is empty :(
+local f2 :: () ~> Int ~> ? -- we have a problem -- if first closure accepts zero arguments, then the lhs of '~>' is empty :(
   = fun() {
       fun internal(x) :: Int ~> ? {
         XYZ

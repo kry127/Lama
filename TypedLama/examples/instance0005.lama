@@ -10,7 +10,7 @@ local succ = fun (x) {
 -- Issue: переопределение типа дважды
 -- Решение: запретить в одном Scope дважды определять тип одного и того же символа.
 pred :: Int ~> Int;
-pred :: Str ~> Str;
+-- pred :: Str ~> Str;
 local pred = fun (x) {
   x - 1
 };

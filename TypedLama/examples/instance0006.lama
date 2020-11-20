@@ -22,8 +22,8 @@ fun g(b) {
 -- scope 2
 
 {
-  f :: Double ~> Str;
-  g :: Double ~> Double;
+  f :: Double(Int) ~> Str;
+  g :: Double(Int) ~> Double(Int);
 
 
   f(g(Double(0))) -- назначили другие типы в другом скоупе

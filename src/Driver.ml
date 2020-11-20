@@ -57,15 +57,16 @@ class options args =
     "  -h        --- show this help\n"             
   in
   object (self)
-    val version = ref false
-    val help    = ref false
-    val i       = ref 1
-    val infile  = ref (None : string option)
-    val outfile = ref (None : string option)
-    val paths   = ref [X86.get_std_path ()]
-    val mode    = ref (`Default : [`Default | `Eval | `SM | `Compile ])
-    val curdir  = Unix.getcwd ()
-    val debug   = ref false
+    val version   = ref false
+    val help      = ref false
+    val typecheck = ref false
+    val i         = ref 1
+    val infile    = ref (None : string option)
+    val outfile   = ref (None : string option)
+    val paths     = ref [X86.get_std_path ()]
+    val mode      = ref (`Default : [`Default | `Eval | `SM | `Compile ])
+    val curdir    = Unix.getcwd ()
+    val debug     = ref false
     (* Workaround until Ostap starts to memoize properly *)
     val const  = ref false
     (* end of the workaround *)
@@ -85,6 +86,7 @@ class options args =
             | "-i"  -> self#set_mode `Eval
             | "-ds" -> self#set_dump dump_sm
             | "-dp" -> self#set_dump dump_ast
+            | "-tc" -> self#set_typecheck
             | "-h"  -> self#set_help
             | "-v"  -> self#set_version
             | "-g"  -> self#set_debug
@@ -101,8 +103,9 @@ class options args =
     method private set_workaround =
       const := true
     (* end of the workaround *)
-    method private set_help    = help := true
-    method private set_version = version := true                          
+    method private set_typecheck = typecheck := true
+    method private set_help      = help := true
+    method private set_version   = version := true
     method private set_dump mask =
       dump := !dump lor mask
     method private set_infile name =
@@ -136,6 +139,7 @@ class options args =
       match !infile with
       | None      -> raise (Commandline_error "Input file not specified")
       | Some name -> name
+    method get_typecheck = !typecheck
     method get_help = !help
     method get_include_paths = !paths
     method basename = Filename.chop_suffix (Filename.basename self#get_infile) ".expr"
@@ -184,6 +188,7 @@ let main =
     cmd#greet;
     match (try parse cmd with Language.Semantic_error msg -> `Fail msg) with
     | `Ok prog ->
+       if cmd#get_typecheck then ignore (Typecheck.typecheck prog);
        cmd#dump_AST (snd prog);
        (match cmd#get_mode with
         | `Default | `Compile ->

@@ -351,11 +351,14 @@ struct
  (* integer constant type                            *) | TConst
  (* array of elements of specified type              *) | TArr of t
  (* string type                                      *) | TString
- (* S-expression type (very complicated)             *) | TSexp of string * t list
+ (* S-expression type                                *) | TSexp of string * t list
  (* Reference type (really, it is one-element array) *) | TRef of t
  (* Arrow type (function call)                       *) | TLambda of t list * t
  (* Union type (maybe we should use sum type?)       *) | TUnion of t list
  (* Empty type (when no value returns from expr)     *) | TVoid (* == Union() *)
+ (* TODO Special type marker for undefined number of args | TVariadic  *)
+ (* TODO S-expression with arbitrary caption              | TSymbol  *)
+ (* E.g. TSymbol (TVariadic) == Any possible S-expression :) *)
  (* Syntactic sugar: TOptional(t) = TUnion(t, TVoid) *)
  with show, html
 
