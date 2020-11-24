@@ -139,7 +139,8 @@ let rec infer_pattern_type pattern =
 (* Function for type checking: accepts context and expression, returns it's type or fails *)
 (* TODO optimization needed: watch the type of the subtrees lazily *)
 let rec type_check ctx expr
-  = match expr with
+  = (* Printf.printf "Type checking \"%s\"...\n" (show(Expr.t) expr); *)
+    match expr with
     | Expr.Const _      -> TConst
     (* TODO for inferring every element in array we should make union contraction algorithm *)
     | Expr.Array values          -> TArr (TUnion (List.map (fun exp -> type_check ctx exp) values))
@@ -197,7 +198,8 @@ let rec type_check ctx expr
                                                       then t_x
                                                       else report_error("Cannot assign a value with inappropriate type")
                                     in ret_type
-    | Expr.Seq(_, step2)         -> type_check ctx step2 (* Ignore whatever the 'step1' type is *)
+                                     (* Ignore whatever the 'step1' type is, but we still need to typecheck it! *)
+    | Expr.Seq(step1, step2)         -> type_check ctx step1; type_check ctx step2
     | Expr.Skip                  -> TVoid                (* Skip has NO return value *)
     | Expr.If(cond, lbr, rbr)    -> let t_cond = type_check ctx cond in
                                     let t_lbr  = type_check ctx lbr  in
@@ -241,8 +243,8 @@ let rec type_check ctx expr
                                     (* Then return accumulated return types in one TUnion type *)
                                     (* TODO TUnion flatten algorithm *)
                                     TUnion(Array.to_list return_types)
-    | Expr.Return(_)             -> TVoid (* TODO Return should yield the result type of inner expression (see Expr.Lambda) *)
-    | Expr.Ignore(_)             -> TVoid (* Neither ignore hasn't *)
+    | Expr.Return(eopt)             -> (match eopt with | Some ee -> type_check ctx ee | None -> TVoid); TVoid (* TODO Return should yield the result type of inner expression (see Expr.Lambda) *)
+    | Expr.Ignore(expr)             -> type_check ctx expr; TVoid (* Neither ignore hasn't *)
     | Expr.Scope(decls, expr)    -> let ctx_layer = List.fold_right (
                                                       fun (name, decl) acc -> match decl with
                                                       | (_, `Fun (args, body, typing))
