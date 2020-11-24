@@ -62,7 +62,44 @@ let rec conforms lhs rhs
   = match (lhs, rhs) with
   | (TAny, _   ) -> true
   | (_   , TAny) -> true
-  | (l, r) -> l = r (* TODO complete definition for all cases necessary *)
+  | (TArr l, TArr r)
+  | (TRef l, TRef r) -> conforms l r
+  | (TSexp(name_l, types_l), TSexp(name_r, types_r)) -> name_l = name_r && List.for_all2 conforms types_l types_r
+  (* Note: right now implemented as CONTRAVARIANT by the arguments *)
+  | (TLambda(args_l, body_l), TLambda(args_r, body_r)) -> List.for_all2 conforms args_r args_l && conforms body_l body_r
+                             (* For all lel \in ls Exists rel \in rs such that `conforms lel rel` *)
+  | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (conforms lel) rs) ls
+  | (t, TUnion rs) -> List.exists (conforms t) rs
+  | (l, r) -> l = r (* TString, TConst, TVoid *)
+
+(* check that type 'lhs' is a subtype of 'rhs'
+   used in union contraction algorithm *)
+let rec subtype lhs rhs
+  = match (lhs, rhs) with
+  | (_   , TAny) -> true
+  | (TArr l, TArr r)
+  | (TRef l, TRef r) -> subtype l r
+  | (TSexp(name_l, types_l), TSexp(name_r, types_r)) -> name_l = name_r && List.for_all2 subtype types_l types_r
+  (* Note: right now implemented as CONTRAVARIANT by the arguments *)
+  | (TLambda(args_l, body_l), TLambda(args_r, body_r)) -> List.for_all2 subtype args_r args_l && subtype body_l body_r
+                             (* For all lel \in ls Exists rel \in rs such that `conforms lel rel` *)
+  | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (conforms lel) rs) ls
+  | (t, TUnion rs) -> List.exists (conforms t) rs
+  | (l, r) -> l = r (* TString, TConst, TVoid *)
+
+(* Union contraction function *)
+(* See also: https://github.com/python/mypy/blob/master/mypy/join.py *)
+(* This implementation doesn't contract this: TUnion[A(TAny, Y(TConst)), A(X(TConst), TAny)] -> TUnion[A(TAny, TAny)] *)
+let rec union_contraction utype =
+  let rec union_contraction_pass res types = match types with
+    | t :: ts -> if t = TAny
+                 then [TAny]
+                 else if List.exists (conforms t) ts then union_contraction_pass res ts
+                 else if List.exists (conforms t) res then union_contraction_pass res ts
+                 else union_contraction_pass (t :: res) ts
+  in match utype with
+  | TUnion (tts) -> TUnion(List.rev(union_contraction_pass [] tts))
+  | _            -> report_error("Union contraction expects TUnion")
 
 (* Infer type of one pattern (see Pattern.t in Language.ml
    Returns pair of Typing.t * ctx_layer' *)
