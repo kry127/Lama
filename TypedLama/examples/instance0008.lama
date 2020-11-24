@@ -1,0 +1,2 @@
+-- callable checking
+"asdf"(1) -- can't do that

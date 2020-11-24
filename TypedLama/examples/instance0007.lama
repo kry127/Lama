@@ -1,0 +1,22 @@
+-- checking matching of expressions
+fun asdf(x) {
+  x :: A(Int);
+  case x of
+    A (0) -> "1"
+   -- | A (x) -> "2" -- false positive
+  esac
+}
+
+fun lll(x) {
+  -- @x(t) :: Union [Nil, Cons(t, x)]; -- хочется так
+  x :: Union [Nil, Cons(?, ?)];
+  case x of
+     Nil -> 0
+   | Cons (_, xs) -> lll(xs)
+  esac
+}
+
+printf(case 1 of
+   1 -> "ok"
+esac);
+Unit
