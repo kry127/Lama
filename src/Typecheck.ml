@@ -82,9 +82,9 @@ let rec subtype lhs rhs
   | (TSexp(name_l, types_l), TSexp(name_r, types_r)) -> name_l = name_r && List.for_all2 subtype types_l types_r
   (* Note: right now implemented as CONTRAVARIANT by the arguments *)
   | (TLambda(args_l, body_l), TLambda(args_r, body_r)) -> List.for_all2 subtype args_r args_l && subtype body_l body_r
-                             (* For all lel \in ls Exists rel \in rs such that `conforms lel rel` *)
-  | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (conforms lel) rs) ls
-  | (t, TUnion rs) -> List.exists (conforms t) rs
+  (* See 2.4.5: http://hirzels.com/martin/papers/dls20-python-types.pdf *)
+  | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (subtype lel) rs) ls
+  | (t, TUnion rs) -> List.exists (subtype t) rs
   | (l, r) -> l = r (* TString, TConst, TVoid *)
 
 (* Union contraction function *)
