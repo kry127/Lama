@@ -64,7 +64,9 @@ let rec conforms lhs rhs
   | (_   , TAny) -> true
   | (TArr l, TArr r)
   | (TRef l, TRef r) -> conforms l r
-  | (TSexp(name_l, types_l), TSexp(name_r, types_r)) -> name_l = name_r && List.for_all2 conforms types_l types_r
+  | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    name_l = name_r
+                                                        && List.length types_l = List.length types_r
+                                                        && List.for_all2 conforms types_l types_r
   (* Note: right now implemented as CONTRAVARIANT by the arguments *)
   | (TLambda(args_l, body_l), TLambda(args_r, body_r)) -> List.for_all2 conforms args_r args_l && conforms body_l body_r
                              (* For all lel \in ls Exists rel \in rs such that `conforms lel rel` *)
@@ -79,7 +81,9 @@ let rec subtype lhs rhs
   | (_   , TAny) -> true
   | (TArr l, TArr r)
   | (TRef l, TRef r) -> subtype l r
-  | (TSexp(name_l, types_l), TSexp(name_r, types_r)) -> name_l = name_r && List.for_all2 subtype types_l types_r
+  | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    name_l = name_r
+                                                        && List.length types_l = List.length types_r
+                                                        && List.for_all2 subtype types_l types_r
   (* Note: right now implemented as CONTRAVARIANT by the arguments *)
   | (TLambda(args_l, body_l), TLambda(args_r, body_r)) -> List.for_all2 subtype args_r args_l && subtype body_l body_r
   (* See 2.4.5: http://hirzels.com/martin/papers/dls20-python-types.pdf *)
@@ -88,7 +92,8 @@ let rec subtype lhs rhs
   | (l, r) -> l = r (* TString, TConst, TVoid *)
 
 (* Union contraction function *)
-(* See also: https://github.com/python/mypy/blob/master/mypy/join.py *)
+(* See also: MyPy: https://github.com/python/mypy/blob/master/mypy/join.py *)
+(* PyType (PyPI) : https://github.com/google/pytype/blob/cf969bca963c56fabbf9cdc2ed39548c843979dc/pytype/pytd/pytd_utils.py#L70 *)
 (* This implementation doesn't contract this: TUnion[A(TAny, Y(TConst)), A(X(TConst), TAny)] -> TUnion[A(TAny, TAny)] *)
 let rec union_contraction utype =
   let rec union_contraction_pass res types = match types with
