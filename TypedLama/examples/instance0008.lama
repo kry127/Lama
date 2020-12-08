@@ -1,2 +1,14 @@
 -- callable checking
-"asdf"(1) -- can't do that
+succ :: Int ~> Int;
+fun succ(x) { x + 1 }
+
+succSmoker :: ? ~> Int;
+fun succSmoker(x) { x + 1 }
+
+succAccepter :: Union[Int ~> Int, ? ~> Int];
+fun succAccepter(x) { x }
+
+local x = true;
+succAccepter(if x then succ else succSmoker fi); -- TODO false positive should type check
+-- p.s. see Expr.Call in Typecheck.ml, pattern matching on t_f. + need refactoring
+Unit

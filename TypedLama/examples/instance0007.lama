@@ -3,20 +3,21 @@ fun asdf(x) {
   x :: A(Int);
   case x of
     A (0) -> "1"
-   -- | A (x) -> "2" -- false positive
+    -- | A (x) -> "2" -- Error: Branch is unreachable -- TODO false positive
+    -- | A (x, y) -> "3" -- Error: Branch does not match anything
   esac
 }
 
-fun lll(x) {
-  -- @x(t) :: Union [Nil, Cons(t, x)]; -- хочется так
+fun len(x) {
+  -- @x(t) :: Union [Nil, Cons(t, x)]; -- хочется задавать рекурсивные типы
   x :: Union [Nil, Cons(?, ?)];
   case x of
      Nil -> 0
-   | Cons (_, xs) -> lll(xs)
+   | Cons (_, xs) -> len(xs)
   esac
 }
 
 printf(case 1 of
-   1 -> "ok"
+   2 -> "ok" -- TODO false negative
 esac);
 Unit

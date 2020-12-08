@@ -25,4 +25,4 @@ local f2 :: () ~> Int ~> ? -- we have a problem -- if first closure accepts zero
       }
       internal
     };
-local f3 = eta f1; -- obviously, f3 has type () ~> Int ~> Int, but should lamac provide this info?
+local f3 = eta f1; -- obviously, f3 has type () ~> Int ~> Int, but should lamac AST provide this info?
