@@ -165,8 +165,8 @@ let rec type_check ctx expr
     | Expr.StringVal (_)         -> TString (* The most plesant rule: anything can be matched to a string *)
     | Expr.Call(f, args)         -> let t_f = type_check ctx f in
                                     let t_args = List.map (fun arg -> type_check ctx arg) args in
-                                    let ret_type =
-                                      match t_f with
+                                    let rec ret_type_func ff =
+                                      match ff with
                                       | TAny -> TAny
                                       | TLambda (premise, conclusion) ->
                                         if try List.for_all2 conforms t_args premise
@@ -174,8 +174,14 @@ let rec type_check ctx expr
                                         then conclusion (* Each expression from t_args conform to the premise of function *)
                                         (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
                                         else report_error("Argument type mismatch in function call")
+                                      | TUnion (ffs) -> union_contraction (TUnion (
+                                                          List.filter_map (* Combine filtering and mapping at the same time *)
+                                                          (* If no exception comes out, give out type as is, otherwise nothing returned *)
+                                                          (fun f -> try Some (ret_type_func f) with _ -> None)
+                                                          ffs
+                                                        ))
                                       | _ -> report_error("Cannot perform a call for non-callable object")
-                                    in ret_type
+                                    in ret_type_func t_f
     | Expr.Assign(reff, exp)     -> let t_reff = type_check ctx reff in
                                     let t_exp  = type_check ctx exp  in
                                     let ret_type =
