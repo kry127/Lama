@@ -71,24 +71,8 @@ let rec conforms lhs rhs
   | (TLambda(args_l, body_l), TLambda(args_r, body_r)) -> List.for_all2 conforms args_r args_l && conforms body_l body_r
                              (* For all lel \in ls Exists rel \in rs such that `conforms lel rel` *)
   | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (conforms lel) rs) ls
-  | (t, TUnion rs) -> List.exists (conforms t) rs
-  | (l, r) -> l = r (* TString, TConst, TVoid *)
-
-(* check that type 'lhs' is a subtype of 'rhs'
-   used in union contraction algorithm *)
-let rec subtype lhs rhs
-  = match (lhs, rhs) with
-  | (_   , TAny) -> true
-  | (TArr l, TArr r)
-  | (TRef l, TRef r) -> subtype l r
-  | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    name_l = name_r
-                                                        && List.length types_l = List.length types_r
-                                                        && List.for_all2 subtype types_l types_r
-  (* Note: right now implemented as CONTRAVARIANT by the arguments *)
-  | (TLambda(args_l, body_l), TLambda(args_r, body_r)) -> List.for_all2 subtype args_r args_l && subtype body_l body_r
-  (* See 2.4.5: http://hirzels.com/martin/papers/dls20-python-types.pdf *)
-  | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (subtype lel) rs) ls
-  | (t, TUnion rs) -> List.exists (subtype t) rs
+  | (tl       , TUnion rs) -> List.exists (conforms tl) rs
+  | (TUnion ls, tr       ) -> List.for_all (fun tl ->  conforms tl tr) ls
   | (l, r) -> l = r (* TString, TConst, TVoid *)
 
 (* Union contraction function *)
@@ -102,6 +86,7 @@ let rec union_contraction utype =
                  else if List.exists (conforms t) ts then union_contraction_pass res ts
                  else if List.exists (conforms t) res then union_contraction_pass res ts
                  else union_contraction_pass (t :: res) ts
+    | []      -> res
   in match utype with
   | TUnion (tts) -> TUnion(List.rev(union_contraction_pass [] tts))
   | _            -> report_error("Union contraction expects TUnion")
@@ -118,13 +103,12 @@ let rec infer_pattern_type pattern =
                                             List.fold_right (fun (n, t) acc_in -> Context.extend_layer acc_in n t) ctx_layer acc
                                     ) inferred_patterns empty_layer
                                     in (TSexp (name, List.map fst inferred_patterns), ctx_layer)
-   (* TODO for inferring every element in array we should make union contraction algorithm *)
   | Pattern.Array(patterns)        -> let inferred_patterns = List.map infer_pattern_type patterns in
                                       let ctx_layer = List.fold_right (
                                           fun (typing, Context.CtxLayer ctx_layer) acc ->
                                             List.fold_right (fun (n, t) acc_in -> Context.extend_layer acc_in n t) ctx_layer acc
                                       ) inferred_patterns empty_layer
-                                      in (TArr(TUnion (List.map fst inferred_patterns)), ctx_layer)
+                                      in (TArr(union_contraction (TUnion (List.map fst inferred_patterns))), ctx_layer)
   | Pattern.Named(name, pattern)   -> let (typing, ctx_layer) = infer_pattern_type pattern
                                       in (typing, Context.extend_layer ctx_layer name typing)
   | Pattern.Const(_)               -> (TConst, empty_layer)
@@ -147,8 +131,7 @@ let rec type_check ctx expr
   = (* Printf.printf "Type checking \"%s\"...\n" (show(Expr.t) expr); *)
     match expr with
     | Expr.Const _      -> TConst
-    (* TODO for inferring every element in array we should make union contraction algorithm *)
-    | Expr.Array values          -> TArr (TUnion (List.map (fun exp -> type_check ctx exp) values))
+    | Expr.Array values          -> TArr (union_contraction (TUnion (List.map (fun exp -> type_check ctx exp) values)))
     | Expr.String _              -> TString
     | Expr.Sexp (name, subexprs) -> TSexp(name, List.map (fun exp -> type_check ctx exp) subexprs)
     | Expr.Var  (name, _)        -> Context.get_type ctx name
@@ -169,7 +152,6 @@ let rec type_check ctx expr
                                          | TArr(elem_type) -> elem_type
                                       (* TODO constant propagation for retrieving type like this: *)
                                       (*  | TSexp(name, typeList)  -> List.nth_opt typeList (Language.eval index []) *)
-                                      (* TODO This is hard but worthy task: should carry computational context as well *)
                                          | TSexp(name, type_list)  -> TUnion (type_list) (* Breaks type safety: UB when index out of bounds *)
                                          (* TODO NO LOCATION *)
                                          | _ -> report_error("Indexing can be performed on strings, arrays and S-expressions only")
@@ -210,7 +192,7 @@ let rec type_check ctx expr
                                     let t_lbr  = type_check ctx lbr  in
                                     let t_rbr  = type_check ctx rbr  in
                                     if conforms t_cond TConst
-                                    then TUnion(t_lbr :: t_rbr :: []) (* TODO think about union flatten should be performed *)
+                                    then union_contraction (TUnion(t_lbr :: t_rbr :: []))
                                     (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
                                     else report_error("If condition should be logical value class")
     | Expr.While(cond, body)
@@ -246,8 +228,7 @@ let rec type_check ctx expr
                                       end
                                     done;
                                     (* Then return accumulated return types in one TUnion type *)
-                                    (* TODO TUnion flatten algorithm *)
-                                    TUnion(Array.to_list return_types)
+                                    union_contraction (TUnion(Array.to_list return_types))
     | Expr.Return(eopt)             -> (match eopt with | Some ee -> type_check ctx ee | None -> TVoid); TVoid (* TODO Return should yield the result type of inner expression (see Expr.Lambda) *)
     | Expr.Ignore(expr)             -> type_check ctx expr; TVoid (* Neither ignore hasn't *)
     | Expr.Scope(decls, expr)    -> let ctx_layer = List.fold_right (

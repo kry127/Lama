@@ -428,6 +428,7 @@ module Expr =
     (* pattern-matching           *) | Case      of t * (Pattern.t * t) list * Loc.t * atr
     (* return statement           *) | Return    of t option
     (* ignore a value             *) | Ignore    of t
+    (* cast expression            *) | Cast      of t * Typing.t
     (* unit value                 *) | Unit
     (* entering the scope         *) | Scope     of (string * decl) list * t 
     (* lambda expression          *) | Lambda    of string list * t * Typing.t

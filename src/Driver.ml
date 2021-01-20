@@ -53,6 +53,7 @@ class options args =
     "  -dp       --- dump AST (the output will be written into .ast file)\n" ^
     "  -ds       --- dump stack machine code (the output will be written into .sm file; has no\n" ^
     "                effect if -i option is specfied)\n" ^
+    "  -tc       --- typecheck code and produce gradually typed code\n" ^
     "  -v        --- show version\n" ^
     "  -h        --- show this help\n"             
   in
