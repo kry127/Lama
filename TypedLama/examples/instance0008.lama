@@ -9,6 +9,5 @@ succAccepter :: Union[Int ~> Int, ? ~> Int];
 fun succAccepter(x) { x }
 
 local x = true;
-succAccepter(if x then succ else succSmoker fi); -- TODO false positive should type check
--- p.s. see Expr.Call in Typecheck.ml, pattern matching on t_f. + need refactoring
+succAccepter(if x then succ else succSmoker fi); -- should type check
 Unit

@@ -34,8 +34,8 @@ module Context =
           | Some typing -> typing            (* Or return found one *)
 
 
-    (* Extend one context layer with the typing information: the [name] has the type [typing] *)
     let extend_layer, extend =
+      (* Extend one context layer with the typing information: the [name] has the type [typing] *)
       let extend_layer ctx_layer name typing
         = match ctx_layer with
           | CtxLayer ctx_layer ->
@@ -135,6 +135,7 @@ let rec type_check ctx expr
     | Expr.String _              -> TString
     | Expr.Sexp (name, subexprs) -> TSexp(name, List.map (fun exp -> type_check ctx exp) subexprs)
     | Expr.Var   name            -> Context.get_type ctx name
+    | Expr.Ref   name            -> TRef (Context.get_type ctx name)
     | Expr.Binop (_, exp1, exp2) -> let t1 = type_check ctx exp1 in
                                     let t2 = type_check ctx exp2 in
                                     if conforms t1 TConst && conforms t2 TConst
@@ -237,17 +238,25 @@ let rec type_check ctx expr
                                     union_contraction (TUnion(Array.to_list return_types))
     | Expr.Return(eopt)             -> (match eopt with | Some ee -> type_check ctx ee | None -> TVoid); TVoid (* TODO Return should yield the result type of inner expression (see Expr.Lambda) *)
     | Expr.Ignore(expr)             -> type_check ctx expr; TVoid (* Neither ignore hasn't *)
-    | Expr.Scope(decls, expr)    -> let ctx_layer = List.fold_right (
-                                                      fun (name, decl) acc -> match decl with
-                                                      | (_, `Fun (args, body))
-                                                            -> type_check (Context.expand ctx) body;
-                                                               acc
-                                                      | (_, `Variable (maybe_def))
-                                                            -> let tc = match maybe_def with | Some def -> type_check ctx def | None -> TAny;
-                                                               in ();
-                                                               acc
-                                                      | (_, `UseWithType (typing)) -> Context.extend_layer acc name typing
-                                                    ) decls (Context.CtxLayer []) in
+    | Expr.Scope(decls, expr)    -> let ctx_layer = List.fold_left (
+                                                      fun acc (name, decl) ->
+                                                        let expanded_ctx = Context.expandWith acc ctx in
+                                                        let type_in_expanded_ctx = Context.get_type expanded_ctx name in
+                                                        match decl with
+                                                        | (_, `Fun (args, body))
+                                                              -> let tc =  type_check (Context.expand expanded_ctx) body;
+                                                                 in (); (* TODO type check body and args to conform 'tc' *)
+                                                                 acc
+                                                        | (_, `Variable (maybe_def))
+                                                              -> let tc = match maybe_def with | Some def -> type_check expanded_ctx def | None -> TAny;
+                                                                 in if not (conforms tc type_in_expanded_ctx)
+                                                                    then report_error (
+                                                                      Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
+                                                                      name (show(Typing.t) tc) (show(Typing.t) type_in_expanded_ctx)
+                                                                    );
+                                                                 acc
+                                                        | (_, `UseWithType (typing)) -> Context.extend_layer acc name typing
+                                                      ) (Context.CtxLayer []) decls in
                                     type_check (Context.expandWith ctx_layer ctx) expr
     | Expr.Lambda(args, body)    -> type_check (Context.expand ctx) body (* TODO collect return yielding types and join with this type with TUnion *)
     | Expr.Leave                 -> report_error("Cannot infer the type for internal compiler node 'Expr.Leave'")
