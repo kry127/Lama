@@ -411,33 +411,34 @@ module Expr =
        notation, it came from GT.
     *)
     @type t =
-    (* integer constant           *) | Const     of int
-    (* array                      *) | Array     of t list
-    (* string                     *) | String    of string
-    (* S-expressions              *) | Sexp      of string * t list
-    (* variable                   *) | Var       of string
-    (* reference (aka "lvalue")   *) | Ref       of string
-    (* binary operator            *) | Binop     of string * t * t
-    (* element extraction         *) | Elem      of t * t
-    (* reference to an element    *) | ElemRef   of t * t
-    (* length                     *) | Length    of t
-    (* string conversion          *) | StringVal of t
-    (* function call              *) | Call      of t * t list
-    (* assignment                 *) | Assign    of t * t
-    (* composition                *) | Seq       of t * t
+    (* integer constant           *) | Const       of int
+    (* array                      *) | Array       of t list
+    (* string                     *) | String      of string
+    (* S-expressions              *) | Sexp        of string * t list
+    (* variable                   *) | Var         of string
+    (* reference (aka "lvalue")   *) | Ref         of string
+    (* binary operator            *) | Binop       of string * t * t
+    (* element extraction         *) | Elem        of t * t
+    (* reference to an element    *) | ElemRef     of t * t
+    (* length                     *) | Length      of t
+    (* string conversion          *) | StringVal   of t
+    (* function call              *) | Call        of t * t list
+    (* assignment                 *) | Assign      of t * t
+    (* composition                *) | Seq         of t * t
     (* empty statement            *) | Skip
-    (* conditional                *) | If        of t * t * t
-    (* loop with a pre-condition  *) | While     of t * t
-    (* loop with a post-condition *) | Repeat    of t * t
-    (* pattern-matching           *) | Case      of t * (Pattern.t * t) list * Loc.t * atr
-    (* return statement           *) | Return    of t option
-    (* ignore a value             *) | Ignore    of t
+    (* conditional                *) | If          of t * t * t
+    (* loop with a pre-condition  *) | While       of t * t
+    (* loop with a post-condition *) | Repeat      of t * t
+    (* pattern-matching           *) | Case        of t * (Pattern.t * t) list * Loc.t * atr
+    (* return statement           *) | Return      of t option
+    (* ignore a value             *) | Ignore      of t
     (* unit value                 *) | Unit
-    (* entering the scope         *) | Scope     of (string * decl) list * t 
-    (* lambda expression          *) | Lambda    of string list * t
+    (* entering the scope         *) | Scope       of (string * decl) list * t
+    (* lambda expression          *) | Lambda      of string list * t
     (* leave a scope              *) | Leave
-    (* intrinsic (for evaluation) *) | Intrinsic of (t config, t config) arrow
-    (* control (for control flow) *) | Control   of (t config, t * t config) arrow
+    (* intrinsic (for evaluation) *) | Intrinsic   of (t config, t config) arrow
+    (* control (for control flow) *) | Control     of (t config, t * t config) arrow
+    (* source location info       *) | LocatedExpr of t * Loc.t
     and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t
                                                                 | `Variable of t option
                                                                 | `UseWithType of Typing.t]
@@ -445,6 +446,12 @@ module Expr =
 
     let notRef = function Reff -> false | _ -> true
     let isVoid = function Void | Weak -> true  | _ -> false
+
+    (* Utilities to make located expressions and location extraction *)
+    let makeLocated expr loc = LocatedExpr(expr, loc#coord)
+    let rec extractLocated expr = match expr with
+        LocatedExpr(e, l) -> let (ee, _) = extractLocated e in (ee, Some l)
+      | _               -> (expr, None)
     
     (* Available binary operators:
         !!                   --- disjunction
@@ -509,6 +516,7 @@ module Expr =
         List.iter (fun v -> Printf.eprintf "%s\n%!" @@ show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") v) vs;
         Printf.eprintf "End Values\n%!"        
       in
+      let expr, l = extractLocated expr in
       match expr with
       | Lambda (args, body) ->
          eval (st, i, o, Value.Closure (args, body, [|st|]) :: vs) Skip k        
@@ -706,7 +714,7 @@ module Expr =
     let makeParser, makeBasicParser, makeScopeParser =
       let def s   = let Some def = Obj.magic !defCell in def s in
       let ostap (
-      parse[infix][atr]: h:basic[infix][Void] -";" t:parse[infix][atr] {Seq (h, t)} | basic[infix][atr];
+      parse[infix][atr]: l:$ h:basic[infix][Void] -";" t:parse[infix][atr] {makeLocated (Seq (h, t)) l} | basic[infix][atr];
       scope[infix][atr]: <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (d, expr)} | {isVoid atr} => <(d, infix')> : def[infix] => {d <> []} => {Scope (d, materialize atr Skip)};
       basic[infix][atr]: !(expr (fun x -> x) (Array.map (fun (a, (atr, l)) -> a, (atr, List.map (fun (s, _, f) -> ostap (- $(s)), f) l)) infix) (primary infix) atr);
       primary[infix][atr]:
@@ -758,11 +766,11 @@ module Expr =
         }
       | base[infix][atr];
       base[infix][atr]:
-        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (Const n)}
-      | l:$ s:STRING                               => {notRef atr} :: (not_a_reference l) => {ignore atr (String s)}
-      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (Const  (Char.code c))}
+        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (Const n) l)}
+      | l:$ s:STRING                               => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (String s) l)}
+      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (Const  (Char.code c)) l)}
       
-      | l:$ c:(%"true" {Const 1} | %"false" {Const 0}) => {notRef atr} :: (not_a_reference l) => {ignore atr c} 
+      | l:$ c:(%"true" {Const 1} | %"false" {Const 0}) => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated c l)}
        
       | l:$ %"infix" s:INFIX => {notRef atr} :: (not_a_reference l) => {
           if ((* UGLY! *) Obj.magic !predefined_op) infix s
@@ -770,10 +778,10 @@ module Expr =
             if s = ":="
             then report_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"")
             else
-              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (Var name)
+              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (makeLocated (Var name) l)
           )            
           else (
-            let name = infix_name s in Loc.attach name l#coord; ignore atr (Var name)
+            let name = infix_name s in Loc.attach name l#coord; ignore atr (makeLocated (Var name) l)
           )
       }
       | l:$ %"fun" "(" args:!(Util.list0)[Pattern.parse] ")"
@@ -794,20 +802,20 @@ module Expr =
           in
           let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
           (* TODO insert typeNode in type definition block *)
-          ignore atr (Lambda (args, body))
+          ignore atr (makeLocated (Lambda (args, body)) l)
       }
 
-      | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (Array es)}
+      | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (Array es) l)}
       | -"{" scope[infix][atr] -"}" 
       | l:$ "{" es:!(Util.list0)[parse infix Val] "}" => {notRef atr} :: (not_a_reference l) => {ignore atr (match es with
-                                                                                      | [] -> Const 0
-                                                                                      | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0))
+                                                                                      | [] -> makeLocated (Const 0) l
+                                                                                      | _  -> makeLocated (List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0)) l)
                                                                          }
-      | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (Sexp (t, match args with
+      | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (Sexp (t, match args with
                                                                                                               | None -> []
-                                                                                                              | Some args -> args))
+                                                                                                              | Some args -> args)) l)
                                                                                         }
-      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (Var x) else Ref x}                 
+      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (makeLocated (Var x) l) else makeLocated (Ref x) l}
 
       | {isVoid atr} => %"skip" {materialize atr Skip}
 
@@ -845,9 +853,9 @@ module Expr =
       }
       | %"return" e:basic[infix][Val]? => {isVoid atr} => {Return e}
       | %"case" l:$ e:parse[infix][Val] %"of" bs:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" scope[infix][atr])] %"esac"{Case (e, bs, l#coord, atr)}
-      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (Var "makeLazy", [Lambda ([], e)]))}
-      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda ([name], Call (e, [Var name])))}
-      | l:$ %"syntax" "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr e}
+      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (makeLocated (Call (Var "makeLazy", [Lambda ([], e)])) l)}
+      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (makeLocated (Lambda ([name], Call (e, [Var name]))) l)}
+      | l:$ %"syntax" "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr (makeLocated e l)}
       | -"(" parse[infix][atr] -")";
       syntax[infix]: ss:!(Util.listBy)[ostap ("|")][syntaxSeq infix] {
         List.fold_right (fun s -> function
@@ -1154,7 +1162,7 @@ module Definition =
          } |
          l:$ ";" {
             match m with
-            | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix' 
+            | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix'
             | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)
          })           
     ) in parse

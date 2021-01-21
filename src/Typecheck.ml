@@ -132,7 +132,8 @@ let rec infer_pattern_type pattern =
 (* TODO optimization needed: watch the type of the subtrees lazily *)
 let rec type_check ctx expr
   = (* Printf.printf "Type checking \"%s\"...\n" (show(Expr.t) expr); *)
-    match expr with
+    let exp, l = Expr.extractLocated expr in
+    match exp with
     | Expr.Const _      -> TConst
     | Expr.Array values          -> TArr (union_contraction (TUnion (List.map (fun exp -> type_check ctx exp) values)))
     | Expr.String _              -> TString

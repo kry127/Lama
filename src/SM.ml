@@ -905,6 +905,7 @@ let compile cmd ((imports, infixes), p) =
          (env, None, 0, [], true) brs
      in
      env, true, se @ (if fe then [LABEL lexp] else []) @ [DUP] @ (List.flatten @@ List.rev code) @ [JMP l] @ if fail then [LABEL lfail; FAIL (loc, atr != Expr.Void); JMP l] else []
+  | Expr.LocatedExpr (e, _) -> compile_expr tail l env e
   in
   let rec compile_fundef env ((name, args, stmt, st) as fd) =
     (* Printf.eprintf "Compile fundef: %s, state=%s\n" name (show(State.t) (show(Value.designation)) st);                *)
