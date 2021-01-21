@@ -1,0 +1,27 @@
+-- check conformity of functions
+-- OK function:
+f :: Int -> A -> B ~> Str;
+fun f(i, a, b) {
+  "kek"
+}
+
+
+-- less_args :: Int -> A -> B ~> Str;
+fun less_args(i, a) {
+  "kek"
+}
+
+-- more_args :: Int -> A -> B ~> Str;
+fun more_args(i, a, b, c) {
+  "kek"
+}
+
+-- wrong_body_type :: Int -> A -> B ~> Str;
+fun wrong_body_type(i, a, b, c) {
+  Wrong
+}
+
+-- wrong_arrow :: Int -> A ~> B ~> Str;
+fun wrong_arrow(i, a, b) {
+  "kek"
+}

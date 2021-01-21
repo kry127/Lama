@@ -66,9 +66,12 @@ let rec conforms lhs rhs
   | (TRef l, TRef r) -> conforms l r
   | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    name_l = name_r
                                                         && List.length types_l = List.length types_r
+                                                        && List.compare_lengths types_l types_r == 0
                                                         && List.for_all2 conforms types_l types_r
   (* Note: right now implemented as CONTRAVARIANT by the arguments *)
-  | (TLambda(args_l, body_l), TLambda(args_r, body_r)) -> List.for_all2 conforms args_r args_l && conforms body_l body_r
+  | (TLambda(args_l, body_l), TLambda(args_r, body_r)) ->    List.compare_lengths args_l args_r == 0
+                                                          && List.for_all2 conforms args_r args_l
+                                                          && conforms body_l body_r
                              (* For all lel \in ls Exists rel \in rs such that `conforms lel rel` *)
   | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (conforms lel) rs) ls
   | (tl       , TUnion rs) -> List.exists (conforms tl) rs
@@ -244,8 +247,13 @@ let rec type_check ctx expr
                                                         let type_in_expanded_ctx = Context.get_type expanded_ctx name in
                                                         match decl with
                                                         | (_, `Fun (args, body))
-                                                              -> let tc =  type_check (Context.expand expanded_ctx) body;
-                                                                 in (); (* TODO type check body and args to conform 'tc' *)
+                                                              -> let type_body =  type_check (Context.expand expanded_ctx) body; in
+                                                                 let tc = TLambda (List.map (fun _ -> TAny) args, type_body)
+                                                                 in if not (conforms tc type_in_expanded_ctx)
+                                                                    then report_error (
+                                                                      Printf.sprintf "Function \"%s\" doesn't conforms declared type %s."
+                                                                      name (show(Typing.t) type_in_expanded_ctx)
+                                                                    );
                                                                  acc
                                                         | (_, `Variable (maybe_def))
                                                               -> let tc = match maybe_def with | Some def -> type_check expanded_ctx def | None -> TAny;
