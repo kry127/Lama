@@ -229,7 +229,15 @@ let compile cmd env imports code =
     | [] -> env, []
     | instr :: scode' ->
         let stack = "" (* env#show_stack*) in
+        (* Printf.printf "insn=%s, stack=%s\n%!" (GT.show(insn) instr) (env#show_stack);  *)
         let env', code' =
+          if env#is_barrier
+          then match instr with
+               | LABEL  s -> if env#has_stack s then (env#drop_barrier)#retrieve_stack s, [Label s] else env, []
+               | FLABEL s -> env#drop_barrier, [Label s]
+               | SLABEL s -> env, [Label s]
+               | _        -> env, []
+          else
           match instr with
           | PUBLIC name -> env#register_public name, []
           | EXTERN name -> env#register_extern name, []
@@ -264,12 +272,10 @@ let compile cmd env imports code =
              (env, Mov (M ("$" ^ s), l) :: call)
 
           | LDA x ->
-             let s, env' = (env#variable x)#allocate in
-             env',
-             (match s with
-	      | S _ | M _ -> [Lea (env'#loc x, eax); Mov (eax, s)]
-	      | _         -> [Lea (env'#loc x, s)]
-             )
+             let s,  env' = (env #variable x)#allocate in
+             let s', env''= env'#allocate in
+             env'',
+             [Lea (env'#loc x, eax); Mov (eax, s); Mov (eax, s')]	     
 
 	  | LD x ->
              let s, env' = (env#variable x)#allocate in
@@ -389,8 +395,8 @@ let compile cmd env imports code =
                  else [Binop (op, x, y); Or1 y]
              )
              
-          | LABEL s     -> (if env#is_barrier then (env#drop_barrier)#retrieve_stack s else env), [Label s]
-
+          | LABEL  s 
+          | FLABEL s
           | SLABEL s    -> env, [Label s]
 
 	  | JMP   l     -> (env#set_stack l)#set_barrier, [Jmp l]
@@ -428,8 +434,8 @@ let compile cmd env imports code =
                      (List.flatten @@ List.map stabs_scope scopes)                         
                   )
                   @
-                  [Meta "\t.cfi_startproc"; Meta "\t.cfi_adjust_cfa_offset\t4"] @
-                  (if has_closure then [Push edx; Meta "\t.cfi_adjust_cfa_offset\t4"] else []) @
+                  [Meta "\t.cfi_startproc"] @
+                  (if has_closure then [Push edx] else []) @
                   (if f = cmd#topname
                    then
                      [Mov   (M "_init", eax);
@@ -442,7 +448,8 @@ let compile cmd env imports code =
                    else []
                   ) @                  
                   [Push ebp;
-                   Meta "\t.cfi_adjust_cfa_offset\t4";   
+                   Meta ("\t.cfi_def_cfa_offset\t" ^ if has_closure then "12" else "8");
+                   Meta ("\t.cfi_offset 5, -" ^ if has_closure then "12" else "8");
                    Mov (esp, ebp);
                    Meta "\t.cfi_def_cfa_register\t5";
                    Binop ("-", M ("$" ^ env#lsize), esp);
@@ -535,7 +542,7 @@ let compile cmd env imports code =
           | FAIL ((line, col), value) ->                       
              let v, env = if value then env#peek, env else env#pop in
              let s, env = env#string cmd#get_infile in
-             env, [Push (L (box col)); Push (L (box line)); Push (M ("$" ^ s)); Push v; Call "Bmatch_failure"; Binop  ("+", L (3 * word_size), esp)]
+             env, [Push (L (box col)); Push (L (box line)); Push (M ("$" ^ s)); Push v; Call "Bmatch_failure"; Binop  ("+", L (4 * word_size), esp)]
              
           | i ->
              invalid_arg (Printf.sprintf "invalid SM insn: %s\n" (GT.show(insn) i))
@@ -622,17 +629,22 @@ class env prg =
     method is_barrier = barrier
 
     (* set barrier *)
-    method set_barrier = {< barrier = true >}
+    method set_barrier = {< stack = []; barrier = true >}
 
     (* drop barrier *)
     method drop_barrier = {< barrier = false >}
 
     (* associates a stack to a label *)
-    method set_stack l = (*Printf.printf "Setting stack for %s\n" l;*) {< stackmap = M.add l stack stackmap >}
+    method set_stack l = (*Printf.printf "Setting stack for %s\n" l;*)
+      {< stackmap = M.add l stack stackmap >}
 
     (* retrieves a stack for a label *)
     method retrieve_stack l = (*Printf.printf "Retrieving stack for %s\n" l;*)
       try {< stack = M.find l stackmap >} with Not_found -> self
+
+    (* checks if there is a stack for a label *)
+    method has_stack l = (*Printf.printf "Retrieving stack for %s\n" l;*)
+      M.mem l stackmap
 
     (* gets a name for a global variable *)
     method loc x =
