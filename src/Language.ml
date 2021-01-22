@@ -441,18 +441,18 @@ module Expr =
     (* source location info       *) | LocatedExpr of t * Loc.t
     and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t
                                                                 | `Variable of t option
-                                                                | `UseWithType of Typing.t]
+                                                                | `UseWithType of Typing.t] * Loc.t
     with show, html
 
     let notRef = function Reff -> false | _ -> true
     let isVoid = function Void | Weak -> true  | _ -> false
 
     (* Utilities to make located expressions and location extraction *)
-    let makeLocated expr loc = LocatedExpr(expr, loc#coord)
-    let rec extractLocated expr = match expr with
-        LocatedExpr(e, l) -> let (ee, _) = extractLocated e in (ee, Some l)
+    let make_located_expr expr loc = LocatedExpr(expr, loc#coord)
+    let rec extract_located_expr expr = match expr with
+        LocatedExpr(e, l) -> let (ee, _) = extract_located_expr e in (ee, Some l)
       | _               -> (expr, None)
-    
+
     (* Available binary operators:
         !!                   --- disjunction
         &&                   --- conjunction
@@ -462,7 +462,7 @@ module Expr =
     *)
 
     (* Update state *)
-    let update st x v =      
+    let update st x v =
       match x with
       | Value.Var (Value.Global x) -> State.update x v st
       | Value.Elem (x, i) -> Value.update_elem x i v; st
@@ -514,24 +514,24 @@ module Expr =
       let print_values vs =
         Printf.eprintf "Values:\n%!";
         List.iter (fun v -> Printf.eprintf "%s\n%!" @@ show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") v) vs;
-        Printf.eprintf "End Values\n%!"        
+        Printf.eprintf "End Values\n%!"
       in
-      let expr, l = extractLocated expr in
+      let expr, l = extract_located_expr expr in
       match expr with
       | Lambda (args, body) ->
-         eval (st, i, o, Value.Closure (args, body, [|st|]) :: vs) Skip k        
+         eval (st, i, o, Value.Closure (args, body, [|st|]) :: vs) Skip k
       | Scope (defs, body) ->
          let vars, body, bnds =
            List.fold_left
              (fun (vs, bd, bnd) -> function
-              | (name, (_, `Variable value)) -> (name, Mut) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
-              | (name, (_, `Fun (args, b)))  -> (name, FVal) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
-              | (name, (_, `UseWithType _)) -> vs, bd, bnd
+              | (name, (_, `Variable value, _)) -> (name, Mut) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
+              | (name, (_, `Fun (args, b), _))  -> (name, FVal) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
+              | (name, (_, `UseWithType _, _)) -> vs, bd, bnd
              )
              ([], body, [])
              (List.rev @@
               List.map (function
-                        | (name, (`Extern, _)) -> report_error (Printf.sprintf "external names (\"%s\") not supported in evaluation" (Subst.subst name))
+                        | (name, (`Extern, _, l)) -> report_error ~loc:(Some l) (Printf.sprintf "external names (\"%s\") not supported in evaluation" (Subst.subst name))
                         | x -> x
                        )
               defs)
@@ -585,10 +585,10 @@ module Expr =
                 let st' = State.push (State.leave st closure.(0)) (State.from_list @@ List.combine args es) (List.map (fun x -> x, Mut) args) in
                 let st'', i', o', vs'' = eval (st', i, o, []) Skip body in
                 closure.(0) <- st'';
-                (State.leave st'' st, i', o', match vs'' with [v] -> v::vs' | _ -> Value.Empty :: vs')                      
+                (State.leave st'' st, i', o', match vs'' with [v] -> v::vs' | _ -> Value.Empty :: vs')
              | _ -> report_error (Printf.sprintf "callee did not evaluate to a function: \"%s\"" (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") f))
             ))]))
-        
+
       | Leave  -> eval (State.drop st, i, o, vs) Skip k
       | Assign (x, e)  ->
          eval conf k (schedule_list [x; e; Intrinsic (fun (st, i, o, v::x::vs) -> (update st x v, i, o, v::vs))])
@@ -625,7 +625,7 @@ module Expr =
                | Pattern.Boxed       , Value.Sexp  (_, _)
                | Pattern.StringTag   , Value.String _
                | Pattern.ArrayTag    , Value.Array  _
-               | Pattern.ClosureTag  , Value.Closure _                                           
+               | Pattern.ClosureTag  , Value.Closure _
                | Pattern.SexpTag     , Value.Sexp  (_, _)                                                  -> st
                | _                                                                                         -> None
              and match_list ps vs s =
@@ -654,7 +654,7 @@ module Expr =
     match atr with
     | Weak -> Seq (expr, Const 0)
     | _    -> expr
-    
+
   (* semantics for infixes created in runtime *)
   let sem s = (fun x atr y -> ignore atr (Call (Var s, [x; y]))), (fun _ -> Val, Val)
 
@@ -699,34 +699,34 @@ module Expr =
           )]
       )
       in
-      ostap (inner[0][id][atr]) 
-      
+      ostap (inner[0][id][atr])
+
     let atr' = atr
     let not_a_reference s = new Reason.t (Msg.make "not a reference" [||] (Msg.Locator.Point s#coord))
-                          
+
     (* UGLY! *)
     let predefined_op : (Obj.t -> Obj.t -> Obj.t) ref = Pervasives.ref (fun _ _ -> invalid_arg "must not happen")
 
-    let defCell = Pervasives.ref 0 
-                                                      
+    let defCell = Pervasives.ref 0
+
     (* ======= *)
-    let makeParsers env = 
+    let makeParsers env =
     let makeParser, makeBasicParser, makeScopeParser =
       let def s   = let Some def = Obj.magic !defCell in def s in
       let ostap (
-      parse[infix][atr]: l:$ h:basic[infix][Void] -";" t:parse[infix][atr] {makeLocated (Seq (h, t)) l} | basic[infix][atr];
+      parse[infix][atr]: l:$ h:basic[infix][Void] -";" t:parse[infix][atr] {make_located_expr (Seq (h, t)) l} | basic[infix][atr];
       scope[infix][atr]: <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (d, expr)} | {isVoid atr} => <(d, infix')> : def[infix] => {d <> []} => {Scope (d, materialize atr Skip)};
       basic[infix][atr]: !(expr (fun x -> x) (Array.map (fun (a, (atr, l)) -> a, (atr, List.map (fun (s, _, f) -> ostap (- $(s)), f) l)) infix) (primary infix) atr);
       primary[infix][atr]:
-          s:(s:"-"? {match s with None -> fun x -> x | _ -> fun x -> Binop ("-", Const 0, x)})  
+          s:(s:"-"? {match s with None -> fun x -> x | _ -> fun x -> Binop ("-", Const 0, x)})
           b:base[infix][Val] is:(  "." f:LIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? {`Post (f, args)}
                                       | "." %"length"                                           {`Len}
                                       | "." %"string"                                           {`Str}
-                                      | "[" i:parse[infix][Val] "]"                             {`Elem i}                                    
-                                      | "(" args:!(Util.list0)[parse infix Val] ")"             {`Call args}  
+                                      | "[" i:parse[infix][Val] "]"                             {`Elem i}
+                                      | "(" args:!(Util.list0)[parse infix Val] ")"             {`Call args}
           )+
         => {match (List.hd (List.rev is)), atr with
-            | `Elem i, Reff -> true            
+            | `Elem i, Reff -> true
             |  _,      Reff -> false
             |  _,      _    -> true} =>
         {
@@ -749,7 +749,7 @@ module Expr =
                 | `Len            -> Length b
                 | `Str            -> StringVal b
                 | `Post (f, args) -> Call (Var f, b :: match args with None -> [] | Some args -> args)
-                | `Call args      -> (match b with Sexp _ -> invalid_arg "retry!" | _ -> Call (b, args)) 
+                | `Call args      -> (match b with Sexp _ -> invalid_arg "retry!" | _ -> Call (b, args))
               )
               b
               is
@@ -766,22 +766,22 @@ module Expr =
         }
       | base[infix][atr];
       base[infix][atr]:
-        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (Const n) l)}
-      | l:$ s:STRING                               => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (String s) l)}
-      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (Const  (Char.code c)) l)}
-      
-      | l:$ c:(%"true" {Const 1} | %"false" {Const 0}) => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated c l)}
-       
+        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (Const n) l)}
+      | l:$ s:STRING                               => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (String s) l)}
+      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (Const  (Char.code c)) l)}
+
+      | l:$ c:(%"true" {Const 1} | %"false" {Const 0}) => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr c l)}
+
       | l:$ %"infix" s:INFIX => {notRef atr} :: (not_a_reference l) => {
           if ((* UGLY! *) Obj.magic !predefined_op) infix s
           then (
             if s = ":="
             then report_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"")
             else
-              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (makeLocated (Var name) l)
-          )            
+              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (make_located_expr (Var name) l)
+          )
           else (
-            let name = infix_name s in Loc.attach name l#coord; ignore atr (makeLocated (Var name) l)
+            let name = infix_name s in Loc.attach name l#coord; ignore atr (make_located_expr (Var name) l)
           )
       }
       | l:$ %"fun" "(" args:!(Util.list0)[Pattern.parse] ")"
@@ -802,20 +802,20 @@ module Expr =
           in
           let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
           (* TODO insert typeNode in type definition block *)
-          ignore atr (makeLocated (Lambda (args, body)) l)
+          ignore atr (make_located_expr (Lambda (args, body)) l)
       }
 
-      | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (Array es) l)}
-      | -"{" scope[infix][atr] -"}" 
+      | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (Array es) l)}
+      | -"{" scope[infix][atr] -"}"
       | l:$ "{" es:!(Util.list0)[parse infix Val] "}" => {notRef atr} :: (not_a_reference l) => {ignore atr (match es with
-                                                                                      | [] -> makeLocated (Const 0) l
-                                                                                      | _  -> makeLocated (List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0)) l)
+                                                                                      | [] -> make_located_expr (Const 0) l
+                                                                                      | _  -> make_located_expr (List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0)) l)
                                                                          }
-      | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (makeLocated (Sexp (t, match args with
+      | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (Sexp (t, match args with
                                                                                                               | None -> []
                                                                                                               | Some args -> args)) l)
                                                                                         }
-      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (makeLocated (Var x) l) else makeLocated (Ref x) l}
+      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (make_located_expr (Var x) l) else make_located_expr (Ref x) l}
 
       | {isVoid atr} => %"skip" {materialize atr Skip}
 
@@ -842,8 +842,8 @@ module Expr =
                let defs, s =
                  List.fold_right (fun (name, def) (defs, s) ->
                      match def with
-                     | (`Local, `Variable (Some expr)) ->
-                        (name, (`Local, `Variable None)) :: defs, Seq (Ignore (Assign (Ref name, expr)), s)
+                     | (`Local, `Variable (Some expr), l) ->
+                        (name, (`Local, `Variable None, l)) :: defs, Seq (Ignore (Assign (Ref name, LocatedExpr(expr, l))), s)
                      | def -> (name, def) :: defs, s)
                    defs
                    ([], s)
@@ -853,9 +853,9 @@ module Expr =
       }
       | %"return" e:basic[infix][Val]? => {isVoid atr} => {Return e}
       | %"case" l:$ e:parse[infix][Val] %"of" bs:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" scope[infix][atr])] %"esac"{Case (e, bs, l#coord, atr)}
-      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (makeLocated (Call (Var "makeLazy", [Lambda ([], e)])) l)}
-      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (makeLocated (Lambda ([name], Call (e, [Var name]))) l)}
-      | l:$ %"syntax" "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr (makeLocated e l)}
+      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (make_located_expr (Call (Var "makeLazy", [Lambda ([], e)])) l)}
+      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (make_located_expr (Lambda ([name], Call (e, [Var name]))) l)}
+      | l:$ %"syntax" "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr (make_located_expr e l)}
       | -"(" parse[infix][atr] -")";
       syntax[infix]: ss:!(Util.listBy)[ostap ("|")][syntaxSeq infix] {
         List.fold_right (fun s -> function
@@ -1087,7 +1087,7 @@ module Definition =
       (* Workaround until Ostap starts to memoize properly *)
       const_var: l:$ name:LIDENT "=" value:!(Expr.constexpr) {
         Loc.attach name l#coord;
-        name, (`Public, `Variable (Some value))
+        name, (`Public, `Variable (Some value), l#coord)
        };
       constdef: %"public" d:!(Util.list (const_var)) ";" {d}
       (* end of the workaround *)
@@ -1130,14 +1130,14 @@ module Definition =
         Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" (show(Typing.t) typeNode) name typl typc; *)
         match m, value with
           | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
-          | _               -> name, (m,`Variable value)
+          | _               -> name, (m,`Variable value, l#coord)
       };
 
       parse[infix]:
         m:(%"local" {`Local} | %"public" e:(%"external")? {match e with None -> `Public | Some _ -> `PublicExtern} | %"external" {`Extern})
           locs:!(Util.list (local_var m infix)) next:";" {locs, infix}
      (* Use "useTypeParser" to parse type assignments *)
-    |  name: LIDENT -"::" typ: !(Typing.typeParser) -";" {[(name, (`Local, `UseWithType (typ)))], infix}
+    |  name: LIDENT -"::" l:$ typ: !(Typing.typeParser) -";" {[(name, (`Local, `UseWithType (typ), l#coord))], infix}
     | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[Pattern.parse] -")"
            -typ:(-"::" $ !(Typing.typeParser))?
           (l:$ "{" body:exprScope[infix'][Expr.Weak] "}" {
@@ -1158,11 +1158,11 @@ module Definition =
                    args
                    ([], body)
                in
-               [(name, (m, `Fun (args, body)))], infix'
+               [(name, (m, `Fun (args, body), l#coord))], infix'
          } |
          l:$ ";" {
             match m with
-            | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix'
+            | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip), l#coord))], infix'
             | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)
          })           
     ) in parse
@@ -1181,7 +1181,7 @@ module Interface =
        | Expr.Scope (decls, _) ->
           List.iter
             (function
-             | (name, (`Public, item)) | (name, (`PublicExtern, item))  ->
+             | (name, (`Public, item, loc)) | (name, (`PublicExtern, item, loc))  ->
                 (match item with
                  | `Fun _      -> append "F,"; append name; append ";\n"
                  | `Variable _ -> append "V,"; append name; append ";\n"

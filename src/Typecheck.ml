@@ -130,9 +130,10 @@ let rec infer_pattern_type pattern =
 
 (* Function for type checking: accepts context and expression, returns it's type or fails *)
 (* TODO optimization needed: watch the type of the subtrees lazily *)
+(* TODO should return both type and transformed expression *)
 let rec type_check ctx expr
   = (* Printf.printf "Type checking \"%s\"...\n" (show(Expr.t) expr); *)
-    let exp, l = Expr.extractLocated expr in
+    let exp, l = Expr.extract_located_expr expr in
     match exp with
     | Expr.Const _      -> TConst
     | Expr.Array values          -> TArr (union_contraction (TUnion (List.map (fun exp -> type_check ctx exp) values)))
@@ -247,24 +248,24 @@ let rec type_check ctx expr
                                                         let expanded_ctx = Context.expandWith acc ctx in
                                                         let type_in_expanded_ctx = Context.get_type expanded_ctx name in
                                                         match decl with
-                                                        | (_, `Fun (args, body))
+                                                        | (_, `Fun (args, body), l)
                                                               -> let type_body =  type_check (Context.expand expanded_ctx) body; in
                                                                  let tc = TLambda (List.map (fun _ -> TAny) args, type_body)
                                                                  in if not (conforms tc type_in_expanded_ctx)
-                                                                    then report_error (
+                                                                    then report_error ~loc:(Some l) (
                                                                       Printf.sprintf "Function \"%s\" doesn't conforms declared type %s."
                                                                       name (show(Typing.t) type_in_expanded_ctx)
                                                                     );
                                                                  acc
-                                                        | (_, `Variable (maybe_def))
+                                                        | (_, `Variable (maybe_def), l)
                                                               -> let tc = match maybe_def with | Some def -> type_check expanded_ctx def | None -> TAny;
                                                                  in if not (conforms tc type_in_expanded_ctx)
-                                                                    then report_error (
+                                                                    then report_error ~loc:(Some l) (
                                                                       Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
                                                                       name (show(Typing.t) tc) (show(Typing.t) type_in_expanded_ctx)
                                                                     );
                                                                  acc
-                                                        | (_, `UseWithType (typing)) -> Context.extend_layer acc name typing
+                                                        | (_, `UseWithType (typing), l) -> Context.extend_layer acc name typing
                                                       ) (Context.CtxLayer []) decls in
                                     type_check (Context.expandWith ctx_layer ctx) expr
     | Expr.Lambda(args, body)    -> type_check (Context.expand ctx) body (* TODO collect return yielding types and join with this type with TUnion *)
