@@ -806,7 +806,8 @@ let compile cmd ((imports, infixes), p) =
                                add_code (compile_list false lop env [x; y]) lop false [BINOP op]
                                
   | Expr.Call (f, args)     -> let lcall, env = env#get_label in
-                               (match f with
+                               let ff, loc = Expr.extract_located_expr f in
+                               (match ff with
                                 | Expr.Var name ->
                                    let env, line = env#gen_line name in
                                    let env, acc  = env#lookup name in

@@ -448,7 +448,8 @@ module Expr =
     let isVoid = function Void | Weak -> true  | _ -> false
 
     (* Utilities to make located expressions and location extraction *)
-    let make_located_expr expr loc = LocatedExpr(expr, loc#coord)
+    let make_located_expr expr loc = expr (* LocatedExpr(expr, loc#coord) *)
+    let make_located_expr_real expr loc = LocatedExpr(expr, loc#coord)
     let rec extract_located_expr expr = match expr with
         LocatedExpr(e, l) -> let (ee, _) = extract_located_expr e in (ee, Some l)
       | _               -> (expr, None)
@@ -714,7 +715,7 @@ module Expr =
     let makeParser, makeBasicParser, makeScopeParser =
       let def s   = let Some def = Obj.magic !defCell in def s in
       let ostap (
-      parse[infix][atr]: l:$ h:basic[infix][Void] -";" t:parse[infix][atr] {make_located_expr (Seq (h, t)) l} | basic[infix][atr];
+      parse[infix][atr]: l:$ h:basic[infix][Void] -";" t:parse[infix][atr] {Seq (h, t)} | basic[infix][atr];
       scope[infix][atr]: <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (d, expr)} | {isVoid atr} => <(d, infix')> : def[infix] => {d <> []} => {Scope (d, materialize atr Skip)};
       basic[infix][atr]: !(expr (fun x -> x) (Array.map (fun (a, (atr, l)) -> a, (atr, List.map (fun (s, _, f) -> ostap (- $(s)), f) l)) infix) (primary infix) atr);
       primary[infix][atr]:
@@ -766,11 +767,11 @@ module Expr =
         }
       | base[infix][atr];
       base[infix][atr]:
-        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (Const n) l)}
-      | l:$ s:STRING                               => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (String s) l)}
-      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (Const  (Char.code c)) l)}
+        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr_real (Const n) l)}
+      | l:$ s:STRING                               => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr_real (String s) l)}
+      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr_real (Const  (Char.code c)) l)}
 
-      | l:$ c:(%"true" {Const 1} | %"false" {Const 0}) => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr c l)}
+      | l:$ c:(%"true" {Const 1} | %"false" {Const 0}) => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr_real c l)}
 
       | l:$ %"infix" s:INFIX => {notRef atr} :: (not_a_reference l) => {
           if ((* UGLY! *) Obj.magic !predefined_op) infix s
@@ -778,10 +779,10 @@ module Expr =
             if s = ":="
             then report_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"")
             else
-              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (make_located_expr (Var name) l)
+              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (make_located_expr_real (Var name) l)
           )
           else (
-            let name = infix_name s in Loc.attach name l#coord; ignore atr (make_located_expr (Var name) l)
+            let name = infix_name s in Loc.attach name l#coord; ignore atr (make_located_expr_real (Var name) l)
           )
       }
       | l:$ %"fun" "(" args:!(Util.list0)[Pattern.parse] ")"
@@ -802,20 +803,20 @@ module Expr =
           in
           let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
           (* TODO insert typeNode in type definition block *)
-          ignore atr (make_located_expr (Lambda (args, body)) l)
+          ignore atr (make_located_expr_real (Lambda (args, body)) l)
       }
 
-      | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (Array es) l)}
+      | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr_real (Array es) l)}
       | -"{" scope[infix][atr] -"}"
-      | l:$ "{" es:!(Util.list0)[parse infix Val] "}" => {notRef atr} :: (not_a_reference l) => {ignore atr (match es with
-                                                                                      | [] -> make_located_expr (Const 0) l
-                                                                                      | _  -> make_located_expr (List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0)) l)
+      | l:$ "{" es:!(Util.list0)[parse infix Val] "}" => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr_real (match es with
+                                                                                      | [] -> Const 0
+                                                                                      | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0)) l)
                                                                          }
-      | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (make_located_expr (Sexp (t, match args with
+      | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (Sexp (t, match args with
                                                                                                               | None -> []
-                                                                                                              | Some args -> args)) l)
+                                                                                                              | Some args -> args))
                                                                                         }
-      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (make_located_expr (Var x) l) else make_located_expr (Ref x) l}
+      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (make_located_expr (Var x) l) else make_located_expr_real (Ref x) l}
 
       | {isVoid atr} => %"skip" {materialize atr Skip}
 
@@ -853,9 +854,9 @@ module Expr =
       }
       | %"return" e:basic[infix][Val]? => {isVoid atr} => {Return e}
       | %"case" l:$ e:parse[infix][Val] %"of" bs:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" scope[infix][atr])] %"esac"{Case (e, bs, l#coord, atr)}
-      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (make_located_expr (Call (Var "makeLazy", [Lambda ([], e)])) l)}
-      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (make_located_expr (Lambda ([name], Call (e, [Var name]))) l)}
-      | l:$ %"syntax" "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr (make_located_expr e l)}
+      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (make_located_expr_real (Call (Var "makeLazy", [Lambda ([], e)])) l)}
+      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (make_located_expr_real (Lambda ([name], Call (e, [Var name]))) l)}
+      | l:$ %"syntax" "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr (make_located_expr_real e l)}
       | -"(" parse[infix][atr] -")";
       syntax[infix]: ss:!(Util.listBy)[ostap ("|")][syntaxSeq infix] {
         List.fold_right (fun s -> function
