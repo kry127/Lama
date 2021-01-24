@@ -188,8 +188,8 @@ let main =
     let cmd = new options Sys.argv in
     cmd#greet;
     match (try parse cmd with Language.Semantic_error msg -> `Fail msg) with
-    | `Ok prog ->
-       if cmd#get_typecheck then ignore (Typecheck.typecheck prog);
+    | `Ok untyped_prog ->
+       let prog = if cmd#get_typecheck then Typecheck.typecheck untyped_prog else untyped_prog in
        cmd#dump_AST (snd prog);
        (match cmd#get_mode with
         | `Default | `Compile ->

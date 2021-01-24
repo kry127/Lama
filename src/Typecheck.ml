@@ -102,14 +102,14 @@ module Conformity =
          It seems that there is NO WAY to check amount of args and return type in runtime.
          Even more, function can accept value of any type by design *)
       | TLambda (_, _) -> Expr.Case(Var(name), [(Pattern.ClosureTag, tru); (Pattern.Wildcard, fls)], loc, Expr.Val)
-      | TSexp(name, types) ->
+      | TSexp(sname, types) ->
              (* Generate names for new closure *)
              let gen_names = List.mapi (fun i _ -> Printf.sprintf "gen_%d" i) types in
              let gen_names_patterns = List.map (fun name -> Pattern.Named(name, Pattern.Wildcard)) gen_names in
              (* This one is generated AST's binded by '&&' binary operation *)
              let ast = List.fold_right2 (fun nm typ bool -> Expr.Binop("&&", plain_gen nm typ, bool)) gen_names types tru in
              (* Insert check in case body *)
-             Expr.Case(Var(name), [(Pattern.Sexp(name, gen_names_patterns), ast); (Pattern.Wildcard, fls)], loc, Expr.Val)
+             Expr.Case(Var(name), [(Pattern.Sexp(sname, gen_names_patterns), ast); (Pattern.Wildcard, fls)], loc, Expr.Val)
       | TUnion(types) -> List.fold_right (fun typ els -> Expr.If(plain_gen name typ, tru, els)) types fls
       | TVoid   -> tru (* Not sure what to do with no real value :) *)
 
@@ -135,7 +135,7 @@ module Conformity =
                           Skip,           (* if checker returns true, that's OK runtime expression *)
                           Expr.Call(Expr.Var("failure"),
                           [
-                            Expr.String "Dynamic cast failed of expression \"%s\" to type \"%s\"!";
+                            Expr.String "Dynamic cast failed of expression \"%s\" to type \"%s\"!\\n";
                             Expr.StringVal(Expr.Var(var_name));
                             Expr.String (show(Typing.t) rhs)
                           ])))
@@ -386,4 +386,6 @@ let rec type_check ctx expr
 
 
 (* Top level typechecker *)
-let typecheck ((imports, infixes), ast) = type_check Context.ZeroCtx ast
+let typecheck ((imports, infixes), ast) =
+  let new_type, new_ast = type_check Context.ZeroCtx ast
+  in ((imports, infixes), new_ast)
