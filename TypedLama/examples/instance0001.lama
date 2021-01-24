@@ -20,5 +20,5 @@ local p3left :: Int = 0, p3right :: Str = "hello";
 local promise :: Int ~> Str;
 
 -- Type(1) = Int, but Type(z) = Str -- type error, because int ~! str
--- uncomment next line to get type error:я
+-- uncomment next line to get type error:
 -- local z :: Str = 1;
