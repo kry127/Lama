@@ -202,185 +202,195 @@ let rec infer_pattern_type pattern =
 
 (* Function for type checking: accepts context and expression, returns it's type and new expression *)
 (* TODO optimization needed: watch the type of the subtrees lazily *)
-let rec type_check ctx expr
-  = (* Printf.printf "Type checking \"%s\"...\n" (show(Expr.t) expr); *)
-    match expr with
-    | Expr.Const _               -> TConst, expr
-    | Expr.Array values          -> let types, exprs = List.split( List.map (fun exp -> type_check ctx exp) values) in
-                                    TArr (union_contraction (TUnion types)), Expr.Array exprs
-    | Expr.String _              -> TString, expr
-    | Expr.Sexp (name, subexprs) -> let types, exprs = List.split ( List.map (fun exp -> type_check ctx exp) subexprs) in
-                                    TSexp(name, types), Sexp(name, exprs)
-    | Expr.Var   name            -> Context.get_type ctx name, expr
-    | Expr.Ref   name            -> TRef (Context.get_type ctx name), expr
-    | Expr.Binop (op, exp1, exp2)-> let t1, e1 = type_check ctx exp1 in
-                                    let t2, e2 = type_check ctx exp2 in
-                                    if conforms t1 TConst && conforms t2 TConst
-                                    then
-                                      (* Already checked conformity, so we can safely match with 'Some' value *)
-                                      let Some cst_e1 = generate_cast e1 t1 TConst in
-                                      let Some cst_e2 = generate_cast e2 t2 TConst in
-                                      TConst, Expr.Binop(op, cst_e1, cst_e2)
-                                    (* TODO not enough info + NO LOCATION in 'report_error' *)
-                                    else report_error("Binary operations can be applied only to integers")
-    | Expr.ElemRef (arr, index) (* Both normal and inplace versions, but I don't know result type of ElemRef... *)
-    | Expr.Elem (arr, index)     -> let t_arr, e_arr     = type_check ctx arr   in
-                                    let t_index, e_index = type_check ctx index in
-                                    if conforms t_index TConst
-                                    then
-                                      (* Cast index to integer and repack AST *)
-                                      let Some e_index_cst = generate_cast e_index t_index TConst in
-                                      let repacked_ast = match expr with
-                                          | Expr.ElemRef (arr, index) -> Expr.ElemRef(arr, e_index_cst)
-                                          | Expr.Elem    (arr, index) -> Expr.Elem   (arr, e_index_cst)
-                                      in
-                                      match t_arr with
-                                           | TAny            -> TAny, repacked_ast
-                                       (* Indexing to string returns char code, see ".elem" in Language.ml *)
-                                           | TString         -> TConst, repacked_ast
-                                           | TArr(elem_type) -> elem_type, repacked_ast
-                                        (* TODO constant propagation for retrieving type like this: *)
-                                        (*  | TSexp(name, typeList)  -> List.nth_opt typeList (Language.eval index []) *)
+(* Use hashtbl of Typing.t as keys instead of set (in set we need total ordering *)
+module TypeHsh = Hashtbl.Make (struct type t = Typing.t let hash = Hashtbl.hash let equal = (==) end)
 
-                                           | TSexp(name, type_list)  -> TUnion (type_list), repacked_ast (* Breaks type safety: UB when index out of bounds *)
+let type_check ctx expr =
+  let rec type_check_int ret_ht ctx expr
+    = (* Printf.printf "Type checking \"%s\"...\n" (show(Expr.t) expr); *)
+      match expr with
+      | Expr.Const _               -> TConst, expr
+      | Expr.Array values          -> let types, exprs = List.split( List.map (fun exp -> type_check_int ret_ht ctx exp) values) in
+                                      TArr (union_contraction (TUnion types)), Expr.Array exprs
+      | Expr.String _              -> TString, expr
+      | Expr.Sexp (name, subexprs) -> let types, exprs = List.split ( List.map (fun exp -> type_check_int ret_ht ctx exp) subexprs) in
+                                      TSexp(name, types), Sexp(name, exprs)
+      | Expr.Var   name            -> Context.get_type ctx name, expr
+      | Expr.Ref   name            -> TRef (Context.get_type ctx name), expr
+      | Expr.Binop (op, exp1, exp2)-> let t1, e1 = type_check_int ret_ht ctx exp1 in
+                                      let t2, e2 = type_check_int ret_ht ctx exp2 in
+                                      if conforms t1 TConst && conforms t2 TConst
+                                      then
+                                        (* Already checked conformity, so we can safely match with 'Some' value *)
+                                        let Some cst_e1 = generate_cast e1 t1 TConst in
+                                        let Some cst_e2 = generate_cast e2 t2 TConst in
+                                        TConst, Expr.Binop(op, cst_e1, cst_e2)
+                                      (* TODO not enough info + NO LOCATION in 'report_error' *)
+                                      else report_error("Binary operations can be applied only to integers")
+      | Expr.ElemRef (arr, index) (* Both normal and inplace versions, but I don't know result type of ElemRef... *)
+      | Expr.Elem (arr, index)     -> let t_arr, e_arr     = type_check_int ret_ht ctx arr   in
+                                      let t_index, e_index = type_check_int ret_ht ctx index in
+                                      if conforms t_index TConst
+                                      then
+                                        (* Cast index to integer and repack AST *)
+                                        let Some e_index_cst = generate_cast e_index t_index TConst in
+                                        let repacked_ast = match expr with
+                                            | Expr.ElemRef (arr, index) -> Expr.ElemRef(arr, e_index_cst)
+                                            | Expr.Elem    (arr, index) -> Expr.Elem   (arr, e_index_cst)
+                                        in
+                                        match t_arr with
+                                             | TAny            -> TAny, repacked_ast
+                                         (* Indexing to string returns char code, see ".elem" in Language.ml *)
+                                             | TString         -> TConst, repacked_ast
+                                             | TArr(elem_type) -> elem_type, repacked_ast
+                                          (* TODO constant propagation for retrieving type like this: *)
+                                          (*  | TSexp(name, typeList)  -> List.nth_opt typeList (Language.eval index []) *)
 
-                                           | _ -> report_error("Indexing can be performed on strings, arrays and S-expressions only") (* TODO NO LOCATION *)
-                                    else report_error("Indexing can be done only with integers") (* TODO NO LOCATION *)
-    | Expr.Length (exp)          -> let t_exp, e_exp = type_check ctx exp in
-                                    let ret_type = match t_exp with
-                                                   | TString | TArr(_) | TSexp(_, _) | TAny -> TConst
-                                                   | _ -> report_error("Length has only strings, arrays and S-expressions")
-                                    in ret_type, e_exp
-    | Expr.StringVal (exp)       -> let _, e_exp = type_check ctx exp in
-                                    TString, e_exp (* The most plesant rule: anything can be matched to a string *)
-    | Expr.Call(f, args)         -> let t_f, e_f = type_check ctx f in
-                                    let t_args, e_args = List.split (List.map (fun arg -> type_check ctx arg) args) in
-                                    let rec ret_func ff =
-                                      match ff with
-                                      | TAny -> TAny, Expr.Call(e_f, e_args)
-                                      | TLambda (premise, conclusion) ->
-                                        if try List.for_all2 conforms t_args premise
-                                           with Invalid_argument(_) -> report_error("Arity mismatch in function call") (* TODO NO 'TVariadic' SUPPORT *)
-                                        then conclusion,  (* Each expression from t_args conform to the premise of function *)
-                                             Expr.Call(e_f, List.map2 (fun (ex, tl) tr -> let Some ex_cst = generate_cast ex tl tr in ex_cst)
-                                                                      (List.combine e_args t_args) premise)
+                                             | TSexp(name, type_list)  -> TUnion (type_list), repacked_ast (* Breaks type safety: UB when index out of bounds *)
 
-                                        else report_error("Argument type mismatch in function call") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
-                                      | TUnion (ffs) -> union_contraction (TUnion (
-                                                          List.filter_map (* Combine filtering and mapping at the same time *)
-                                                          (* If no exception comes out, give out type as is, otherwise nothing returned *)
-                                                          (fun f -> try Some (fst (ret_func f)) with _ -> None)
-                                                          ffs
-                                                        )), Expr.Call(e_f, e_args)
-                                      | _ -> report_error("Cannot perform a call for non-callable object")
-                                    in ret_func t_f
-    | Expr.Assign(reff, exp)     -> let t_reff, e_reff = type_check ctx reff in
-                                    let t_exp, e_exp  = type_check ctx exp  in
-                                    let ret =
-                                      match t_reff with
-                                      | TAny -> TAny, Expr.Assign(e_reff, e_exp)
-                                      | TRef (t_x) -> if conforms t_exp t_x
-                                                      then
-                                                        let Some e_exp_cst = generate_cast e_exp t_exp t_x in
-                                                        t_x, Expr.Assign(e_reff, e_exp_cst)
-                                                      else report_error("Cannot assign a value with inappropriate type")
-                                    in ret
-                                     (* Ignore whatever the 'step1' type is, but we still need to typecheck it! *)
-    | Expr.Seq(step1, step2)         -> let _, step1_ast = type_check ctx step1 in
-                                        let t, step2_ast = type_check ctx step2 in
-                                        t, Expr.Seq(step1_ast, step2_ast)
-    | Expr.Skip                  -> TVoid, expr                (* Skip has NO return value *)
-    | Expr.If(cond, lbr, rbr)    -> let t_cond, e_cond = type_check ctx cond in
-                                    let t_lbr,  e_lbr  = type_check ctx lbr  in
-                                    let t_rbr,  e_rbr  = type_check ctx rbr  in
-                                    if conforms t_cond TConst
-                                    then
-                                      let Some e_cond_cst = generate_cast e_cond t_cond TConst in
-                                      union_contraction (TUnion(t_lbr :: t_rbr :: []))
-                                      , Expr.If(e_cond_cst, e_lbr, e_rbr)
-                                    else report_error("If condition should be logical value class") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
-    | Expr.While(cond, body)
-    | Expr.Repeat(body, cond)    -> let t_cond, e_cond = type_check ctx cond in
-                                    let t_body, e_body = type_check ctx body in
-                                    if conforms t_cond TConst
-                                    then
-                                      let Some e_cond_cst = generate_cast e_cond t_cond TConst in
-                                      let repacked_ast = match expr with
-                                      | Expr.While (cond, body) -> Expr.While (e_cond_cst, e_body)
-                                      | Expr.Repeat(body, cond) -> Expr.Repeat(e_body, e_cond_cst)
-                                      in
-                                      TVoid, repacked_ast (* Assumed the result type of such cycles is empty *)
-                                    else report_error("Loop condition should be logical value class") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
-    (* TODO very difficult branch. But no dynamic checks needed though! *)
-    | Expr.Case(match_expr, branches, loc, return_kind)
-                                 -> let t_match_expr, e_match_expr = type_check ctx match_expr in
-                                 (* Then, we analyze each branch in imperative style. O(n^2) * O(Complexity of confomrs) *)
-                                    let len = List.length branches in
-                                    let pattern_types = Array.make len TAny in
-                                    let returns = Array.make len (TAny, Expr.Const 0) in
-                                    for i = 0 to len - 1 do
-                                      let (pattern, implementation) = (List.nth branches i) in
-                                      let (pattern_type, ctx_layer) = infer_pattern_type pattern in
-                                      (* Check conformity with main pattern *)
-                                      if not (conforms pattern_type t_match_expr)
-                                      then report_error ~loc:(Some loc) "Branch does not match anything (useless)"
-                                      else begin
-                                        (* Then check conformity with upper patterns *)
-                                        for j = 0 to i - 1 do
-                                          if conforms pattern_type pattern_types.(j)
-                                          then report_error ~loc:(Some loc) "Branch is unreachable (already covered)"
-                                          else ();
-                                        done;
-                                        (* We have useful branch here *)
-                                        pattern_types.(i) <- pattern_type;
-                                        returns.(i) <- type_check (Context.expandWith ctx_layer ctx) implementation
-                                      end
-                                    done;
-                                    let return_types, e_branches_impl = List.split (Array.to_list returns) in
-                                    let e_branches = List.map2 (fun (pat, _) impl -> pat, impl) branches e_branches_impl in
-                                    (* Then return accumulated return types in one TUnion type *)
-                                    union_contraction (TUnion(return_types))
-                                    , Expr.Case(e_match_expr, e_branches, loc, return_kind)
-    | Expr.Return(eopt)             -> (* TODO Return should yield the result type of inner expression (see Expr.Lambda) *)
-                                       (match eopt with
-                                       | Some ee -> let _, e_expr = type_check ctx ee in
-                                                    TVoid, Expr.Return(Some e_expr)
-                                       | None    -> TVoid, expr)
-    | Expr.Ignore(expr)             -> let _, e_expr = type_check ctx expr in
-                                       TVoid, Expr.Ignore(e_expr)
-    (* decided, that Scope does not affect structure of the AST *)
-    | Expr.Scope(decls, expr)    -> let ctx_layer = List.fold_left (
-                                                      fun acc (name, decl) ->
-                                                        let expanded_ctx = Context.expandWith acc ctx in
-                                                        let type_in_expanded_ctx = Context.get_type expanded_ctx name in
-                                                        match decl with
-                                                        | (_, `Fun (args, body))
-                                                              -> let type_body, _ =  type_check (Context.expand expanded_ctx) body; in
-                                                                 let tc = TLambda (List.map (fun _ -> TAny) args, type_body)
-                                                                 in if not (conforms tc type_in_expanded_ctx)
-                                                                    then report_error (
-                                                                      Printf.sprintf "Function \"%s\" doesn't conforms declared type %s."
-                                                                      name (show(Typing.t) type_in_expanded_ctx)
-                                                                    );
-                                                                 acc
-                                                        | (_, `Variable (maybe_def))
-                                                              -> let tc = match maybe_def with | Some def -> fst (type_check expanded_ctx def) | None -> TAny;
-                                                                 in if not (conforms tc type_in_expanded_ctx)
-                                                                    then report_error (
-                                                                      Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
-                                                                      name (show(Typing.t) tc) (show(Typing.t) type_in_expanded_ctx)
-                                                                    );
-                                                                 acc
-                                                        | (_, `UseWithType (typing)) -> Context.extend_layer acc name typing
-                                                      ) (Context.CtxLayer []) decls in
-                                    let t_expr, e_expr = type_check (Context.expandWith ctx_layer ctx) expr in
-                                    t_expr, Expr.Scope(decls, e_expr)
-    | Expr.Lambda(args, body)    ->  (* TODO collect return yielding types and join with this type with TUnion *)
-                                    let t_body, e_body = type_check (Context.expand ctx) body
-                                    in TLambda(List.map (fun _ -> TAny) args, t_body), Expr.Lambda(args, e_body)
-    | Expr.Leave                 -> report_error("Cannot infer the type for internal compiler node 'Expr.Leave'")
-    | Expr.Intrinsic (_)         -> report_error("Cannot infer the type for internal compiler node 'Expr.Intrinsic'")
-    | Expr.Control   (_)         -> report_error("Cannot infer the type for internal compiler node 'Expr.Control'")
+                                             | _ -> report_error("Indexing can be performed on strings, arrays and S-expressions only") (* TODO NO LOCATION *)
+                                      else report_error("Indexing can be done only with integers") (* TODO NO LOCATION *)
+      | Expr.Length (exp)          -> let t_exp, e_exp = type_check_int ret_ht ctx exp in
+                                      let ret_type = match t_exp with
+                                                     | TString | TArr(_) | TSexp(_, _) | TAny -> TConst
+                                                     | _ -> report_error("Length has only strings, arrays and S-expressions")
+                                      in ret_type, e_exp
+      | Expr.StringVal (exp)       -> let _, e_exp = type_check_int ret_ht ctx exp in
+                                      TString, e_exp (* The most plesant rule: anything can be matched to a string *)
+      | Expr.Call(f, args)         -> let t_f, e_f = type_check_int ret_ht ctx f in
+                                      let t_args, e_args = List.split (List.map (fun arg -> type_check_int ret_ht ctx arg) args) in
+                                      let rec ret_func ff =
+                                        match ff with
+                                        | TAny -> TAny, Expr.Call(e_f, e_args)
+                                        | TLambda (premise, conclusion) ->
+                                          if try List.for_all2 conforms t_args premise
+                                             with Invalid_argument(_) -> report_error("Arity mismatch in function call") (* TODO NO 'TVariadic' SUPPORT *)
+                                          then conclusion,  (* Each expression from t_args conform to the premise of function *)
+                                               Expr.Call(e_f, List.map2 (fun (ex, tl) tr -> let Some ex_cst = generate_cast ex tl tr in ex_cst)
+                                                                        (List.combine e_args t_args) premise)
+
+                                          else report_error("Argument type mismatch in function call") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
+                                        | TUnion (ffs) -> union_contraction (TUnion (
+                                                            List.filter_map (* Combine filtering and mapping at the same time *)
+                                                            (* If no exception comes out, give out type as is, otherwise nothing returned *)
+                                                            (fun f -> try Some (fst (ret_func f)) with _ -> None)
+                                                            ffs
+                                                          )), Expr.Call(e_f, e_args)
+                                        | _ -> report_error("Cannot perform a call for non-callable object")
+                                      in ret_func t_f
+      | Expr.Assign(reff, exp)     -> let t_reff, e_reff = type_check_int ret_ht ctx reff in
+                                      let t_exp, e_exp  = type_check_int ret_ht ctx exp  in
+                                      let ret =
+                                        match t_reff with
+                                        | TAny -> TAny, Expr.Assign(e_reff, e_exp)
+                                        | TRef (t_x) -> if conforms t_exp t_x
+                                                        then
+                                                          let Some e_exp_cst = generate_cast e_exp t_exp t_x in
+                                                          t_x, Expr.Assign(e_reff, e_exp_cst)
+                                                        else report_error("Cannot assign a value with inappropriate type")
+                                      in ret
+                                       (* Ignore whatever the 'step1' type is, but we still need to typecheck it! *)
+      | Expr.Seq(step1, step2)         -> let _, step1_ast = type_check_int ret_ht ctx step1 in
+                                          let t, step2_ast = type_check_int ret_ht ctx step2 in
+                                          t, Expr.Seq(step1_ast, step2_ast)
+      | Expr.Skip                  -> TVoid, expr                (* Skip has NO return value *)
+      | Expr.If(cond, lbr, rbr)    -> let t_cond, e_cond = type_check_int ret_ht ctx cond in
+                                      let t_lbr,  e_lbr  = type_check_int ret_ht ctx lbr  in
+                                      let t_rbr,  e_rbr  = type_check_int ret_ht ctx rbr  in
+                                      if conforms t_cond TConst
+                                      then
+                                        let Some e_cond_cst = generate_cast e_cond t_cond TConst in
+                                        union_contraction (TUnion(t_lbr :: t_rbr :: []))
+                                        , Expr.If(e_cond_cst, e_lbr, e_rbr)
+                                      else report_error("If condition should be logical value class") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
+      | Expr.While(cond, body)
+      | Expr.Repeat(body, cond)    -> let t_cond, e_cond = type_check_int ret_ht ctx cond in
+                                      let t_body, e_body = type_check_int ret_ht ctx body in
+                                      if conforms t_cond TConst
+                                      then
+                                        let Some e_cond_cst = generate_cast e_cond t_cond TConst in
+                                        let repacked_ast = match expr with
+                                        | Expr.While (cond, body) -> Expr.While (e_cond_cst, e_body)
+                                        | Expr.Repeat(body, cond) -> Expr.Repeat(e_body, e_cond_cst)
+                                        in
+                                        TVoid, repacked_ast (* Assumed the result type of such cycles is empty *)
+                                      else report_error("Loop condition should be logical value class") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
+      (* TODO very difficult branch. But no dynamic checks needed though! *)
+      | Expr.Case(match_expr, branches, loc, return_kind)
+                                   -> let t_match_expr, e_match_expr = type_check_int ret_ht ctx match_expr in
+                                   (* Then, we analyze each branch in imperative style. O(n^2) * O(Complexity of confomrs) *)
+                                      let len = List.length branches in
+                                      let pattern_types = Array.make len TAny in
+                                      let returns = Array.make len (TAny, Expr.Const 0) in
+                                      for i = 0 to len - 1 do
+                                        let (pattern, implementation) = (List.nth branches i) in
+                                        let (pattern_type, ctx_layer) = infer_pattern_type pattern in
+                                        (* Check conformity with main pattern *)
+                                        if not (conforms pattern_type t_match_expr)
+                                        then report_error ~loc:(Some loc) "Branch does not match anything (useless)"
+                                        else begin
+                                          (* Then check conformity with upper patterns *)
+                                          for j = 0 to i - 1 do
+                                            if conforms pattern_type pattern_types.(j) (* TODO replace with subtype, see instance0012 *)
+                                            then report_error ~loc:(Some loc) "Branch is unreachable (already covered)"
+                                            else ();
+                                          done;
+                                          (* We have useful branch here *)
+                                          pattern_types.(i) <- pattern_type;
+                                          returns.(i) <- type_check_int ret_ht (Context.expandWith ctx_layer ctx) implementation
+                                        end
+                                      done;
+                                      let return_types, e_branches_impl = List.split (Array.to_list returns) in
+                                      let e_branches = List.map2 (fun (pat, _) impl -> pat, impl) branches e_branches_impl in
+                                      (* Then return accumulated return types in one TUnion type *)
+                                      union_contraction (TUnion(return_types))
+                                      , Expr.Case(e_match_expr, e_branches, loc, return_kind)
+      | Expr.Return(eopt)             -> (match eopt with
+                                         | Some ee -> let t_expr, e_expr = type_check_int ret_ht ctx ee in
+                                                      TypeHsh.add ret_ht t_expr true; (* TODO Add result to type set*)
+                                                      TVoid, Expr.Return(Some e_expr)
+                                         | None    -> TVoid, expr)
+      | Expr.Ignore(expr)             -> let _, e_expr = type_check_int ret_ht ctx expr in
+                                         TVoid, Expr.Ignore(e_expr)
+      (* decided, that Scope does not affect structure of the AST *)
+      | Expr.Scope(decls, expr)    -> let ctx_layer = List.fold_left (
+                                                        fun acc (name, decl) ->
+                                                          let expanded_ctx = Context.expandWith acc ctx in
+                                                          let type_in_expanded_ctx = Context.get_type expanded_ctx name in
+                                                          match decl with
+                                                          | (_, `Fun (args, body))
+                                                                -> let type_body, _ =  type_check_int ret_ht (Context.expand expanded_ctx) body; in
+                                                                   let tc = TLambda (List.map (fun _ -> TAny) args, type_body)
+                                                                   in if not (conforms tc type_in_expanded_ctx)
+                                                                      then report_error (
+                                                                        Printf.sprintf "Function \"%s\" doesn't conforms declared type %s."
+                                                                        name (show(Typing.t) type_in_expanded_ctx)
+                                                                      );
+                                                                   acc
+                                                          | (_, `Variable (maybe_def))
+                                                                -> let tc = match maybe_def with | Some def -> fst (type_check_int ret_ht expanded_ctx def) | None -> TAny;
+                                                                   in if not (conforms tc type_in_expanded_ctx)
+                                                                      then report_error (
+                                                                        Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
+                                                                        name (show(Typing.t) tc) (show(Typing.t) type_in_expanded_ctx)
+                                                                      );
+                                                                   acc
+                                                          | (_, `UseWithType (typing)) -> Context.extend_layer acc name typing
+                                                        ) (Context.CtxLayer []) decls in
+                                      let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
+                                      t_expr, Expr.Scope(decls, e_expr)
+      | Expr.Lambda(args, body)    ->  (* TODO collect return yielding types and join with this type with TUnion *)
+                                      let sub_ret_ht = (TypeHsh.create 128) in
+                                      let t_body, e_body = type_check_int sub_ret_ht (Context.expand ctx) body in
+                                      let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
+                                                        [t_body] (TypeHsh.to_seq_keys sub_ret_ht) in
+                                      let l_ret_type = union_contraction (TUnion(union_types)) in
+                                      TLambda(List.map (fun _ -> TAny) args, t_body), Expr.Lambda(args, e_body)
+      | Expr.Leave                 -> report_error("Cannot infer the type for internal compiler node 'Expr.Leave'")
+      | Expr.Intrinsic (_)         -> report_error("Cannot infer the type for internal compiler node 'Expr.Intrinsic'")
+      | Expr.Control   (_)         -> report_error("Cannot infer the type for internal compiler node 'Expr.Control'")
+  in
+  type_check_int (TypeHsh.create 128) ctx expr
 
 
 

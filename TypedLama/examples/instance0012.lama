@@ -1,0 +1,30 @@
+-- infer types of functions :)
+
+-- the type should be smth like
+-- Union[Str, Int, Some(Int), None]
+fun weird(i) {
+  case i of
+     1  -> return "lol"
+  | "w" -> return 100500
+  | _   -> Skip
+  esac;
+  if i > 5
+  then return Some (i - 5)
+  fi;
+  None
+}
+
+fun f(i) {
+  -- we can check it easily with (properly working) pattern matching. Useless branches are reported!
+  case weird(i) of
+     #unboxed -> printf("Number!\n")
+  |  #string  -> printf("String!\n")
+  |  Some(x)  -> printf("Some of %d\n", x)
+  |  None     -> printf("None\n")
+  esac
+}
+
+f(1);
+f("w");
+f(7);
+f(4)
