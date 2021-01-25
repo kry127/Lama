@@ -391,12 +391,16 @@ let type_check ctx expr =
                                                           let type_in_expanded_ctx = Context.get_type expanded_ctx name in
                                                           match decl with
                                                           | (_, `Fun (args, body))
-                                                                -> let type_body, _ =  type_check_int ret_ht (Context.expand expanded_ctx) body; in
-                                                                   let tc = TLambda (List.map (fun _ -> TAny) args, type_body)
-                                                                   in if not (conforms tc type_in_expanded_ctx)
+                                                                -> let sub_ret_ht = (TypeHsh.create 128) in (* Make fresh hashtable for returns in body *)
+                                                                   let type_body, _ =  type_check_int sub_ret_ht (Context.expand expanded_ctx) body; in
+                                                                   let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
+                                                                                     [type_body] (TypeHsh.to_seq_keys sub_ret_ht) in
+                                                                   let l_ret_type = union_contraction (TUnion(union_types)) in
+                                                                   let tc = TLambda (List.map (fun _ -> TAny) args, l_ret_type) in
+                                                                   if not (conforms tc type_in_expanded_ctx)
                                                                       then report_error (
-                                                                        Printf.sprintf "Function \"%s\" doesn't conforms declared type %s."
-                                                                        name (show(Typing.t) type_in_expanded_ctx)
+                                                                        Printf.sprintf "Function \"%s\" having type \"%s\" doesn't conforms declared type %s."
+                                                                        name (show(Typing.t) tc) (show(Typing.t) type_in_expanded_ctx)
                                                                       );
                                                                    acc
                                                           | (_, `Variable (maybe_def))
@@ -417,7 +421,7 @@ let type_check ctx expr =
                                       let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
                                                         [t_body] (TypeHsh.to_seq_keys sub_ret_ht) in
                                       let l_ret_type = union_contraction (TUnion(union_types)) in
-                                      TLambda(List.map (fun _ -> TAny) args, t_body), Expr.Lambda(args, e_body)
+                                      TLambda(List.map (fun _ -> TAny) args, l_ret_type), Expr.Lambda(args, e_body)
       | Expr.Leave                 -> report_error("Cannot infer the type for internal compiler node 'Expr.Leave'")
       | Expr.Intrinsic (_)         -> report_error("Cannot infer the type for internal compiler node 'Expr.Intrinsic'")
       | Expr.Control   (_)         -> report_error("Cannot infer the type for internal compiler node 'Expr.Control'")

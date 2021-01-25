@@ -1,7 +1,7 @@
 -- infer types of functions :)
 
 -- the type should be smth like
--- weird :: ? ~> Union[Str, Int, Some(Int), None];
+weird :: ? ~> Union[Str, Int, Some(Int), None]; -- if you delete any of the union constitutent, there will be a type error
 fun weird(i) {
   case i of
      1  -> return "lol"
