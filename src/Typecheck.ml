@@ -65,6 +65,32 @@ module Conformity =
     let loc = (0, 0) (* TODO need to know real location, not fake one *)
 
 
+    (* check that type 'lhs' is embedded in type 'rhs', or as you call it 'subtype'
+       that function is similar to 'conforms' function *)
+    let rec subtype lhs rhs
+      = match (lhs, rhs) with
+      | (_   , TAny) -> true  (* Anything is subtype of TAny, obviously. *)
+      | (TArr l, TArr r)
+      | (TRef l, TRef r) -> subtype l r
+      | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    name_l = name_r
+                                                            && List.length types_l = List.length types_r
+                                                            && List.compare_lengths types_l types_r == 0
+                                                            && List.for_all2 subtype types_l types_r
+      (* Subtyping relation required to be contravariant by arguments *)
+      | (TLambda(args_l, body_l), TLambda(args_r, body_r)) ->
+                    List.compare_lengths args_l args_r == 0
+                 && List.for_all2 subtype args_r args_l
+                 && subtype body_l body_r
+
+      (* not really correct implementation of 'embedding' because of List.exists, but maybe OK for subtyping?...
+         Ex: Union[A(?, Y), A(X, ?)] <: Union[A(?, C), A(B, ?)] *)
+      | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (subtype lel) rs) ls
+      | (tl       , TUnion rs) -> List.exists (subtype tl) rs
+      | (TUnion ls, tr       ) -> List.for_all (fun tl ->  subtype tl tr) ls
+
+      | (l, r) -> l = r (* TString, TConst, TVoid *)
+
+
     (* check that type 'lhs' can be used as type 'rhs': "lhs conforms rhs"
        returns boolean (conformity) of two types *)
     let rec conforms lhs rhs
@@ -146,25 +172,26 @@ module Conformity =
       (* lhs does not conforms rhs *)
       else None
 
+
+    (* Union contraction function *)
+    (* See also: MyPy: https://github.com/python/mypy/blob/master/mypy/join.py *)
+    (* PyType (PyPI) : https://github.com/google/pytype/blob/cf969bca963c56fabbf9cdc2ed39548c843979dc/pytype/pytd/pytd_utils.py#L70 *)
+    (* This implementation doesn't contract this: TUnion[A(TAny, Y(TConst)), A(X(TConst), TAny)] -> TUnion[A(TAny, TAny)] *)
+    let rec union_contraction utype =
+      let rec union_contraction_pass res types = match types with
+        | t :: ts -> if t = TAny
+                     then [TAny]
+                     else if List.exists (subtype t) ts then union_contraction_pass res ts (* we also should check in reverse, so there is two passes *)
+                     else if List.exists (subtype t) res then union_contraction_pass res ts
+                     else union_contraction_pass (t :: res) ts
+        | []      -> res
+      in match utype with
+      | TUnion (tts) -> TUnion(union_contraction_pass [] (union_contraction_pass [] tts)) (* make two passes *)
+      | _            -> report_error("Union contraction expects TUnion")
+
   end
 
 open Conformity
-
-(* Union contraction function *)
-(* See also: MyPy: https://github.com/python/mypy/blob/master/mypy/join.py *)
-(* PyType (PyPI) : https://github.com/google/pytype/blob/cf969bca963c56fabbf9cdc2ed39548c843979dc/pytype/pytd/pytd_utils.py#L70 *)
-(* This implementation doesn't contract this: TUnion[A(TAny, Y(TConst)), A(X(TConst), TAny)] -> TUnion[A(TAny, TAny)] *)
-let rec union_contraction utype =
-  let rec union_contraction_pass res types = match types with
-    | t :: ts -> if t = TAny
-                 then [TAny]
-                 else if List.exists (conforms t) ts then union_contraction_pass res ts
-                 else if List.exists (conforms t) res then union_contraction_pass res ts
-                 else union_contraction_pass (t :: res) ts
-    | []      -> res
-  in match utype with
-  | TUnion (tts) -> TUnion(List.rev(union_contraction_pass [] tts))
-  | _            -> report_error("Union contraction expects TUnion")
 
 (* Infer type of one pattern (see Pattern.t in Language.ml
    Returns pair of Typing.t * ctx_layer' *)
@@ -327,12 +354,13 @@ let type_check ctx expr =
                                         let (pattern_type, ctx_layer) = infer_pattern_type pattern in
                                         (* Check conformity with main pattern *)
                                         if not (conforms pattern_type t_match_expr)
-                                        then report_error ~loc:(Some loc) "Branch does not match anything (useless)"
+                                        then report_error ~loc:(Some loc) "branch does not match anything (useless)"
                                         else begin
                                           (* Then check conformity with upper patterns *)
                                           for j = 0 to i - 1 do
-                                            if conforms pattern_type pattern_types.(j) (* TODO replace with subtype, see instance0012 *)
-                                            then report_error ~loc:(Some loc) "Branch is unreachable (already covered)"
+                                           (* see instance0012: subtyping is used when less specified type occurs below more specified: *)
+                                            if subtype pattern_type pattern_types.(j)
+                                            then report_error ~loc:(Some loc) "branch is unreachable (already covered)"
                                             else ();
                                           done;
                                           (* We have useful branch here *)
@@ -340,6 +368,10 @@ let type_check ctx expr =
                                           returns.(i) <- type_check_int ret_ht (Context.expandWith ctx_layer ctx) implementation
                                         end
                                       done;
+                                      (* Extra check that all branches have been covered *)
+                                      let b_type = union_contraction (TUnion(Array.to_list pattern_types)) in
+                                        if not (subtype t_match_expr (b_type))
+                                        then report_error ~loc:(Some loc) (Printf.sprintf "branches \"%s\" do not cover target type \"%s\"" (show(Typing.t) b_type) (show(Typing.t) t_match_expr));
                                       let return_types, e_branches_impl = List.split (Array.to_list returns) in
                                       let e_branches = List.map2 (fun (pat, _) impl -> pat, impl) branches e_branches_impl in
                                       (* Then return accumulated return types in one TUnion type *)
