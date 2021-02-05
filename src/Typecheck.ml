@@ -127,7 +127,7 @@ module Conformity =
       (* For lambdas we can only check that incoming object is really a function
          It seems that there is NO WAY to check amount of args and return type in runtime.
          Even more, function can accept value of any type by design *)
-      | TLambda (_, _) -> Expr.Case(Var(name), [(Pattern.ClosureTag, tru); (Pattern.Wildcard, fls)], loc, Expr.Val)
+      | TLambda (targs, tbody) -> Expr.Case(Var(name), [(Pattern.ClosureTag, tru); (Pattern.Wildcard, fls)], loc, Expr.Val)
       | TSexp(sname, types) ->
              (* Generate names for new closure *)
              let gen_names = List.mapi (fun i _ -> Printf.sprintf "gen_%d" i) types in
@@ -286,15 +286,21 @@ let type_check ctx expr =
                                       TString, e_exp (* The most plesant rule: anything can be matched to a string *)
       | Expr.Call(f, args)         -> let t_f, e_f = type_check_int ret_ht ctx f in
                                       let t_args, e_args = List.split (List.map (fun arg -> type_check_int ret_ht ctx arg) args) in
-                                      let rec ret_func ff =
-                                        match ff with
+                                      let rec ret_func t_ff =
+                                        match t_ff with
                                         | TAny -> TAny, Expr.Call(e_f, e_args)
                                         | TLambda (premise, conclusion) ->
                                           if try List.for_all2 conforms t_args premise
                                              with Invalid_argument(_) -> report_error("Arity mismatch in function call") (* TODO NO 'TVariadic' SUPPORT *)
-                                          then conclusion,  (* Each expression from t_args conform to the premise of function *)
-                                               Expr.Call(e_f, List.map2 (fun (ex, tl) tr -> let Some ex_cst = generate_cast ex tl tr in ex_cst)
-                                                                        (List.combine e_args t_args) premise)
+                                          then (* In 'then' branch each expression from t_args conform to the premise of function *)
+                                             (* Step 1. cast all arguments to the input type of the function *)
+                                             let cast_args = List.map2 (fun (ex, tl) tr -> let Some ex_cst = generate_cast ex tl tr in ex_cst)
+                                                                       (List.combine e_args t_args) premise in
+                                             (* Step 2. then perform call of the function *)
+                                             let call_func = Expr.Call(e_f, cast_args) in
+                                             (* Step 3. cast result of the function to the resulting type *)
+                                             let Some casted_call_func = generate_cast call_func TAny conclusion in
+                                               conclusion, casted_call_func
 
                                           else report_error("Argument type mismatch in function call") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
                                         | TUnion (ffs) -> union_contraction (TUnion (
@@ -379,7 +385,7 @@ let type_check ctx expr =
                                       , Expr.Case(e_match_expr, e_branches, loc, return_kind)
       | Expr.Return(eopt)             -> (match eopt with
                                          | Some ee -> let t_expr, e_expr = type_check_int ret_ht ctx ee in
-                                                      TypeHsh.add ret_ht t_expr true; (* TODO Add result to type set*)
+                                                      TypeHsh.add ret_ht t_expr true; (* Add result to type set*)
                                                       TVoid, Expr.Return(Some e_expr)
                                          | None    -> TVoid, expr)
       | Expr.Ignore(expr)             -> let _, e_expr = type_check_int ret_ht ctx expr in
@@ -415,7 +421,7 @@ let type_check ctx expr =
                                                         ) (Context.CtxLayer []) decls in
                                       let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
                                       t_expr, Expr.Scope(decls, e_expr)
-      | Expr.Lambda(args, body)    ->  (* TODO collect return yielding types and join with this type with TUnion *)
+      | Expr.Lambda(args, body)    ->  (* collect return yielding types and join with this type with TUnion *)
                                       let sub_ret_ht = (TypeHsh.create 128) in
                                       let t_body, e_body = type_check_int sub_ret_ht (Context.expand ctx) body in
                                       let union_types = Seq.fold_left (fun arr elm -> elm :: arr)

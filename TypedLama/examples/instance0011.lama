@@ -1,6 +1,6 @@
 -- допустим есть пара объектов неизвестного типа ?
 local a :: ? = A(3, "three");
-local b :: ? = fun(B(c, i)) { c.string };
+local b :: ? = fun(t) { 4  };
 local c :: ? = 35;
 
 
@@ -10,9 +10,15 @@ local c :: ? = 35;
   local obj;
 
   -- оба присвоения должны проверять в рантайме, что мы присваиваем объект правильного типа
-  obj := a; -- OK
-  obj := b; -- OK
+  printf("a");
+  obj := a;
+  printf(" -- ok\n");
+  printf("b");
+  obj := b; -- TODO issue, this dynamic cast is successful when b is arbitrary function
+  printf(" -- ok\n");
+  printf("c");
   obj := c; -- Runtime error
+  printf(" -- ok\n");
   Unit
 };
 Unit

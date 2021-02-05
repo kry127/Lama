@@ -1,4 +1,7 @@
 -- Type(1) = Int, but Type(z) = Str -- type error, because int ~! str
 -- uncomment explicit type to get type error:
-z :: Str;
+-- z :: Str;
 local z = 1;
+
+
+local zz :: Str = 1; -- TODO still not working, should throw type error

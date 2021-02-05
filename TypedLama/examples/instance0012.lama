@@ -1,15 +1,19 @@
 -- infer types of functions :)
 
+fun process_TYPE(ast, ...)
+
 -- the type should be smth like
+-- the type should be specified explicitly, because it assumed to be '?' by default
 weird :: ? ~> Union[Str, Int, Some(Int), None]; -- if you delete any of the union constitutent, there will be a type error
-fun weird(i) {
-  case i of
+@Type(? ~> Union[Str, Int, Some(Int), None])
+fun weird(x) {
+  case x of
      1  -> return "lol"
   | "w" -> return 100500
   | _   -> Skip
   esac;
-  if i > 5
-  then return Some (i - 5)
+  if x > 5
+  then return Some (x - 5)
   fi;
   None
 }
