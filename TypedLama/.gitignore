@@ -1,5 +1,4 @@
-*
-!*.lama
-!*.MD
-!.gitignore
-!*/
+*.html
+*.i
+*.s
+playground

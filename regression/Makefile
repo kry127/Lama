@@ -13,6 +13,6 @@ $(TESTS): %: %.lama
 	LAMA=../runtime $(LAMAC) $< && cat $@.input | ./$@ > $@.log && diff $@.log orig/$@.log
 
 clean:
-	$(RM) test*.log *.s *~ $(TESTS) *.i
+	$(RM) test*.log *.s *.sm *~ $(TESTS) *.i
 	$(MAKE) clean -C expressions
 	$(MAKE) clean -C deep-expressions

@@ -14,8 +14,7 @@ public fun kCombinatorTyped (x, y) :: Int -> String ~> Int {
 
 -- but how we would still type pattern-matching?
 -- Answer: we should infer type!
--- for example, there we have Abc(?, ?) ~> ?
-public fun id2 (Abc (x, y)) {
+public fun id2 (Abc (x, y)) :: ? {
   x
 }
 

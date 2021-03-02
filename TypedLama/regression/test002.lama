@@ -1,0 +1,3 @@
+-- Type(1) = Int, but Type(z) = Str -- type error, because int ~! str
+-- uncomment next line to get type error:
+local z :: Str = 1;
