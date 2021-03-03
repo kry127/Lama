@@ -15,12 +15,12 @@ module Subst =
     module H = Hashtbl.Make (struct type t = string let hash = Hashtbl.hash let equal = (=) end)
 
     let tab = (H.create 1024 : string H.t)
-          
+
     let attach infix op = H.add tab infix op
     let subst  id       = match H.find_opt tab id with None -> id | Some op -> op
-    
+
   end
-   
+
 let infix_name infix =
   let b = Buffer.create 64 in
   Buffer.add_string b "i__Infix_";
@@ -28,7 +28,7 @@ let infix_name infix =
   let s = Buffer.contents b in
   Subst.attach s ("infix " ^ infix);
   s
-  
+
 let sys_infix_name infix =
   let b = Buffer.create 64 in
   Buffer.add_string b "s__Infix_";
@@ -46,15 +46,83 @@ module Loc =
     module H = Hashtbl.Make (struct type t = string let hash = Hashtbl.hash let equal = (==) end)
 
     let tab = (H.create 1024 : t H.t)
-          
+
     let attach s loc = H.add tab s loc
-    let get          = H.find_opt tab 
-      
+    let get          = H.find_opt tab
+
   end
 
 let report_error ?(loc=None) str =
   raise (Semantic_error (str ^ match loc with None -> "" | Some (l, c) -> Printf.sprintf " at (%d, %d)" l c));;
-  
+
+
+(* This module is for warnings and errors (instead of report_error *)
+(* Hint: now try to find Logger.add_error along with report_error *)
+(* honestly, can be separated away from here to other file *)
+module Logger =
+  struct
+    type level = [`Info | `Warning | `Error]
+
+    type t = (level * string * Loc.t option) list
+
+    let show_loc x = match x with
+      | None        -> ""
+      | Some (l, c) -> (Printf.sprintf "(%d, %d)" l c)
+
+    let show_t_entry x = match x with
+      | (`Info,    descr, loc) -> Printf.sprintf "[Info   ] %s: %s" (show_loc loc) descr
+      | (`Warning, descr, loc) -> Printf.sprintf "[Warning] %s: %s" (show_loc loc) descr
+      | (`Error,   descr, loc) -> Printf.sprintf "[Error  ] %s: %s" (show_loc loc) descr
+
+    let show_t lst = String.concat "\n" (List.map show_t_entry lst)
+
+    class logclass =
+        object (self)
+          val mutable log = ( [] : t )
+          val mutable info_count    = 0
+          val mutable warning_count = 0
+          val mutable error_count   = 0
+
+          method get_log = log
+
+          method has_infos    = info_count    > 0
+          method has_warnings = warning_count > 0
+          method has_errors   = error_count   > 0
+
+          method get_info_count = info_count
+          method get_warning_count = warning_count
+          method get_error_count = error_count
+
+          method add_info    ?(loc=None) description =
+                   info_count    <- info_count + 1;
+                   log           <- (`Info, description, loc) :: log
+          method add_warning ?(loc=None) description =
+                   warning_count <- warning_count + 1;
+                   log           <- (`Warning, description, loc) :: log
+          method add_error   ?(loc=None) description =
+                   error_count   <- error_count + 1;
+                   log           <- (`Error, description, loc) :: log
+
+          method clear =
+                    log <- ( [] : t )
+
+        end;;
+
+    let log = new logclass
+    let get_log ()      = log#get_log
+    let has_infos ()    = log#has_infos
+    let has_warnings () = log#has_warnings
+    let has_errors ()   = log#has_errors
+    let get_info_count ()    = log#get_info_count
+    let get_warning_count () = log#get_warning_count
+    let get_error_count ()   = log#get_error_count
+    let add_info    ?(loc=None) description = log#add_info    ~loc:(loc) description
+    let add_warning ?(loc=None) description = log#add_warning ~loc:(loc) description
+    let add_error   ?(loc=None) description = log#add_error   ~loc:(loc) description
+    let clear () = log#clear
+    let show () = show_t (log#get_log)
+  end
+
 @type k = Unmut | Mut | FVal with show, html
 
 (* Values *)
@@ -68,7 +136,7 @@ module Value =
     | Arg    of int
     | Access of int
     | Fun    of string
-    with show, html   
+    with show, html
 
     @type ('a, 'b) t =
     | Empty
@@ -151,7 +219,7 @@ module Builtin =
     let list        = ["read"; "write"; ".elem"; ".length"; ".array"; ".stringval"]
     let bindings () = List.map (fun name -> name, Value.Builtin name) list
     let names       = List.map (fun name -> name, FVal) list
-                 
+
     let eval (st, i, o, vs) args = function
     | "read"     -> (match i with z::i' -> (st, i', o, (Value.of_int z)::vs) | _ -> failwith "Unexpected end of input")
     | "write"    -> (st, i, o @ [Value.to_int @@ List.hd args], Value.Empty :: vs)
@@ -200,10 +268,13 @@ module State =
 
     (* Undefined state *)
     let undefined x =
-      report_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x))
+      Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x)); Value.Empty
+
+    let undefined_designation x =
+      Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x)); (Value.Global "undefined_global")
 
     (* Create a state from bindings list *)
-    let from_list l = fun x -> try List.assoc x l with Not_found -> report_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x))
+    let from_list l = fun x -> try List.assoc x l with Not_found -> Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x)); Value.Empty
 
     (* Bind a variable to a value in a state *)
     let bind x v s = fun y -> if x = y then v else s y
@@ -226,12 +297,20 @@ module State =
       | G (scope, s) ->
          if is_var x scope
          then G (scope, bind x v s)
-         else report_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" is undefined or does not designate a variable" (Subst.subst x))
+         else (
+           (* report_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" is undefined or does not designate a variable" (Subst.subst x)) *)
+           Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" is undefined or does not designate a variable" (Subst.subst x));
+           G(scope, s)
+         )
       | L (scope, s, enclosing) ->
          if in_scope x scope
          then if is_var x scope
               then L (scope, bind x v s, enclosing)
-              else report_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" does not designate a variable" (Subst.subst x))
+              else (
+                (* report_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" does not designate a variable" (Subst.subst x)) *)
+                 Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" does not designate a variable" (Subst.subst x));
+                 L(scope, s, enclosing)
+              )
          else L (scope, s, inner enclosing)
       in
       inner s
@@ -778,7 +857,11 @@ module Expr =
           if ((* UGLY! *) Obj.magic !predefined_op) infix s
           then (
             if s = ":="
-            then report_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"")
+            then (
+              (* report_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"") *)
+              Logger.add_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"");
+              ignore atr Skip
+            )
             else
               let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (Var name)
           )
@@ -941,13 +1024,13 @@ module Expr =
 (* Infix helpers *)
 module Infix =
   struct
-    
+
     @type kind     = Predefined | Public | Local with show
     @type ass      = [`Lefta | `Righta | `Nona] with show
     @type loc      = [`Before of string | `After of string | `At of string] with show
     @type export   = (ass * string * loc) list with show
     @type showable = (ass * string * kind) list array with show
-                                                                                                     
+
     type t = ([`Lefta | `Righta | `Nona] * ((Expr.atr -> (Expr.atr * Expr.atr)) * ((string * kind * (Expr.t -> Expr.atr -> Expr.t -> Expr.t)) list))) array
 
     let show_infix (infix : t) =
@@ -955,7 +1038,7 @@ module Infix =
 
     let extract_exports infix =
       let ass_string = function `Lefta -> "L" | `Righta -> "R" | _ -> "I" in
-      let exported = 
+      let exported =
         Array.map
           (fun (ass, (_, ops)) ->
             (ass, List.rev @@ List.map (fun (s, kind, _) -> s, kind) @@ List.filter (function (_, Public, _) | (_, Predefined, _) -> true | _ -> false) ops)
@@ -971,8 +1054,8 @@ module Infix =
                  let loc' = match tl with [] -> `After s | _ -> `At s in
                  (fun again ->
                     match kind with
-                    | Public -> again (loc', (ass, s, loc) :: acc) 
-                    | _      -> again (loc', acc) 
+                    | Public -> again (loc', (ass, s, loc) :: acc)
+                    | _      -> again (loc', acc)
                  )
                  (match tl with [] -> fun acc -> acc | _ -> fun acc -> inner acc tl)
             in
@@ -982,9 +1065,9 @@ module Infix =
           exported
       in List.rev exports
 
-    let is_predefined op =      
+    let is_predefined op =
       List.exists (fun x -> op = x) [":"; "!!"; "&&"; "=="; "!="; "<="; "<"; ">="; ">"; "+"; "-"; "*" ; "/"; "%"; ":="]
-      
+
     (*
     List.iter (fun op ->
         Printf.eprintf "F,%s\n" (sys_infix_name op);
@@ -997,7 +1080,7 @@ module Infix =
         Printf.eprintf "}\n\n"        *)
       ) [":"; "!!"; "&&"; "=="; "!="; "<="; "<"; ">="; ">"; "+"; "-"; "*" ; "/"; "%"]
      *)
-      
+
     let default : t =
       Array.map (fun (a, s) ->
         a,
@@ -1015,14 +1098,14 @@ module Infix =
       |]
 
     exception Break of [`Ok of t | `Fail of string]
-      
+
     let find_op infix op cb ce =
       try
         Array.iteri (fun i (_, (_, l)) -> if List.exists (fun (s, _, _) -> s = op) l then raise (Break (cb i))) infix;
         ce ()
       with Break x -> x
 
-    let predefined_op infix op =      
+    let predefined_op infix op =
       Array.exists
         (fun (_, (_, l)) ->
            List.exists (fun (s, p, _) -> s = op && p = Predefined) l
@@ -1031,11 +1114,11 @@ module Infix =
 
     (* UGLY!!! *)
     Expr.predefined_op := (Obj.magic) predefined_op;;
-                          
-    let no_op op coord = `Fail (Printf.sprintf "infix \"%s\" not found in the scope" op) 
+
+    let no_op op coord = `Fail (Printf.sprintf "infix \"%s\" not found in the scope" op)
 
     let kind_of = function true -> Public | _ -> Local
-                                               
+
     let at coord op newp public (sem, _) (infix : t) =
       find_op infix op
         (fun i ->
@@ -1094,10 +1177,10 @@ module Definition =
       constdef: %"public" d:!(Util.list (const_var)) ";" {d}
       (* end of the workaround *)
     )
-                                                      
+
     let makeParser env exprBasic exprScope =
     let ostap (
-      arg : l:$ x:LIDENT {Loc.attach x l#coord; x};       
+      arg : l:$ x:LIDENT {Loc.attach x l#coord; x};
       position[pub][ass][coord][newp]:
         %"at" s:INFIX {match ass with
                        | `Nona -> Infix.at coord s newp pub
@@ -1131,7 +1214,11 @@ module Definition =
         (* let (typl, typc) = match typ with | Some (ttl, _) -> ttl#coord | None -> l#coord in
         Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" (show(Typing.t) typeNode) name typl typc; *)
         match m, value with
-          | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
+          | `Extern, Some _ -> (
+                                (* report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name) *)
+                                Logger.add_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name);
+                                name, (m, `Variable value)
+                               )
           | _               -> name, (m,`Variable value)
       };
 
@@ -1143,37 +1230,42 @@ module Definition =
     | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[Pattern.parse] -")"
            -typ:(-"::" $ !(Typing.typeParser))?
           (l:$ "{" body:exprScope[infix'][Expr.Weak] "}" {
-            if flag && List.length args != 2 then report_error ~loc:(Some l#coord) "infix operator should accept two arguments";
-            match m with
-            | `Extern -> report_error ~loc:(Some l#coord) (Printf.sprintf "a body for external function \"%s\" can not be specified" (Subst.subst orig_name))
-            | _       ->
-               let args, body =
-                 List.fold_right
-                   (fun arg (args, body) ->
-                     match arg with
-                     | Pattern.Named (name, Pattern.Wildcard) -> name :: args, body
-                     | Pattern.Wildcard -> env#get_tmp :: args, body
-                     | p ->
-                        let arg = env#get_tmp in
-                        arg :: args, Expr.Case (Expr.Var arg, [p, body], l#coord, Expr.Weak)
-                   )
-                   args
-                   ([], body)
-               in
-               [(name, (m, `Fun (args, body)))], infix'
+            if flag && List.length args != 2 then Logger.add_error ~loc:(Some l#coord) "infix operator should accept two arguments";
+            (match m with
+            | `Extern -> Logger.add_error ~loc:(Some l#coord) (Printf.sprintf "a body for external function \"%s\" can not be specified" (Subst.subst orig_name))
+            | _   -> ());
+            let args, body =
+              List.fold_right
+                (fun arg (args, body) ->
+                  match arg with
+                  | Pattern.Named (name, Pattern.Wildcard) -> name :: args, body
+                  | Pattern.Wildcard -> env#get_tmp :: args, body
+                  | p ->
+                     let arg = env#get_tmp in
+                     arg :: args, Expr.Case (Expr.Var arg, [p, body], l#coord, Expr.Weak)
+                )
+                args
+                ([], body)
+            in
+            [(name, (m, `Fun (args, body)))], infix'
          } |
          l:$ ";" {
             match m with
-            | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix' 
-            | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)
-         })           
+            | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix'
+            | _       -> (
+                          (* report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name) *)
+                          Logger.add_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name);
+                          (* But just in case define empty function { } as in upper case *)
+                          [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix'
+            )
+         })
     ) in parse
 
   end
-  
+
 module Interface =
   struct
-    
+
     (* Generates an interface file. *)
     let gen ((imps, ifxs), p) =
       let buf = Buffer.create 256 in
@@ -1192,7 +1284,7 @@ module Interface =
              | _ -> ()
             )
             decls;
-       | _ -> ());      
+       | _ -> ());
       List.iter
         (function (ass, op, loc) ->
            let append_op op = append "\""; append op; append "\"" in
@@ -1203,7 +1295,7 @@ module Interface =
            append ";\n"
         ) ifxs;
       Buffer.contents buf
-      
+
     (* Read an interface file *)
     let read fname =
       let ostap (
@@ -1224,13 +1316,13 @@ module Interface =
                              inherit Util.Lexers.ident [] s
                              inherit Util.Lexers.string s
                              inherit Util.Lexers.skip  [Matcher.Skip.whitespaces " \t\n"] s
-                           end)             
+                           end)
                           (ostap (interface -EOF))
          with
          | `Ok intfs -> Some intfs
          | `Fail er  -> report_error (Printf.sprintf "malformed interface file \"%s\": %s" fname er)
         )
-      with Sys_error _ -> None                        
+      with Sys_error _ -> None
 
     let find import paths =
       (*Printf.printf "Paths to search import in: %s" (show(list) (show(string)) paths); *)
@@ -1270,7 +1362,7 @@ ostap (
       (fun infix import ->
         List.fold_left
           (fun infix item ->
-             let insert name infix md = 
+             let insert name infix md =
                let name = infix_name name in
                match md (Expr.sem name) infix with
                | `Ok infix' -> infix'
@@ -1301,8 +1393,8 @@ let parse cmd =
     object
       val imports   = Pervasives.ref ([] : string list)
       val tmp_index = Pervasives.ref 0
-                    
-      method add_import imp = imports := imp :: !imports 
+
+      method add_import imp = imports := imp :: !imports
       method get_tmp        = let index = !tmp_index in incr tmp_index; Printf.sprintf "__tmp%d" index
       method get_imports    = !imports
     end
@@ -1322,21 +1414,21 @@ let parse cmd =
   in
 
   let definitions = Pervasives.ref None in
-  
+
   let (makeParser, makeBasicParser, makeScopeParser) = Expr.makeParsers env in
-  
+
   let expr        s = makeParser      definitions s in
   let exprBasic   s = makeBasicParser definitions s in
   let exprScope   s = makeScopeParser definitions s in
-  
+
   definitions := Some (makeDefinitions env exprBasic exprScope);
 
   let Some definitions = !definitions in
-  
+
   let ostap (
       parse[cmd]:
         <(is, infix)> : imports[cmd]
-        <(d, infix')> : definitions[infix] 
+        <(d, infix')> : definitions[infix]
         expr:expr[infix'][Expr.Weak]? {
             (env#get_imports @ is, Infix.extract_exports infix'), Expr.Scope (d, match expr with None -> Expr.materialize Expr.Weak Expr.Skip | Some e -> e)
           }

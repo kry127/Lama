@@ -520,7 +520,7 @@ object (self : 'self)
          scope_index = scope_index + 1;
          scope       = {
              scope with
-             st = State.G ([], State.undefined)
+             st = State.G ([], State.undefined_designation)
          }
        >} # import_imports
       
@@ -528,7 +528,7 @@ object (self : 'self)
        {< scope_index = scope_index + 1;
           scope       = {
               scope with
-              st     = State.L ([], State.undefined, scope.st);
+              st     = State.L ([], State.undefined_designation, scope.st);
               scopes = {blab = blab; elab = elab; names = []; subs = []} :: scope.scopes
             }
        >}

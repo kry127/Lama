@@ -11,4 +11,4 @@ $(TESTS): %: %.lama
 	LAMA=../../runtime $(LAMAC) -I .. -ds -dp $< && ./$@ > $@.log && diff $@.log orig/$@.log
 
 clean:
-	$(RM) test*.log *.s *~ $(TESTS) *.i
+	$(RM) test*.log *.html *.sm *.s *~ $(TESTS) *.i

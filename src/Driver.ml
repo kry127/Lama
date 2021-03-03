@@ -182,18 +182,31 @@ class options args =
     method set_debug =
       debug := true     
   end
+
+let checkLoggerIfError = fun () ->
+    if Language.Logger.has_errors ()
+    then (Printf.eprintf "Errors occured!\n%s\n" (Language.Logger.show ()); exit 255)
+    
+let outputWarnings = fun() ->
+    if Language.Logger.has_warnings () && not (Language.Logger.has_errors ())
+    then Printf.eprintf "Warnings occured!\n %s\n" (Language.Logger.show ())
   
 let main =
   try 
     let cmd = new options Sys.argv in
     cmd#greet;
-    match (try parse cmd with Language.Semantic_error msg -> `Fail msg) with
+    Language.Logger.clear; (* Initialize logger for collecting messages *)
+    let parseResult = try parse cmd with Language.Semantic_error msg -> `Fail msg in
+    checkLoggerIfError ();
+    match parseResult with
     | `Ok untyped_prog ->
        let prog = if cmd#get_typecheck then Typecheck.typecheck untyped_prog else untyped_prog in
+       checkLoggerIfError();
        cmd#dump_AST (snd prog);
        (match cmd#get_mode with
         | `Default | `Compile ->
-            ignore @@ X86.build cmd prog
+            ignore @@ X86.build cmd prog;
+            checkLoggerIfError();
         | _ -> 
   	   let rec read acc =
 	     try
@@ -208,9 +221,11 @@ let main =
 	     then Language.eval prog input
 	     else SM.run (SM.compile cmd prog) input
 	   in
+       checkLoggerIfError();
 	   List.iter (fun i -> Printf.printf "%d\n" i) output 
-       )
-    | `Fail er -> Printf.eprintf "Error: %s\n" er; exit 255
+       );
+       outputWarnings() (* At last, output warnings if any *)
+    | `Fail er -> Printf.eprintf "Fatal error: %s\n" er; exit 255
   with
   | Language.Semantic_error msg -> Printf.printf "Error: %s\n" msg; exit 255 
   | Commandline_error msg -> Printf.printf "%s\n" msg; exit 255
