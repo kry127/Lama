@@ -197,9 +197,9 @@ let main =
     cmd#greet;
     Language.Logger.clear; (* Initialize logger for collecting messages *)
     let parseResult = try parse cmd with Language.Semantic_error msg -> `Fail msg in
-    checkLoggerIfError ();
     match parseResult with
     | `Ok untyped_prog ->
+       checkLoggerIfError ();
        let prog = if cmd#get_typecheck then Typecheck.typecheck untyped_prog else untyped_prog in
        checkLoggerIfError();
        cmd#dump_AST (snd prog);

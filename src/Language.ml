@@ -511,26 +511,15 @@ module Expr =
     (* pattern-matching           *) | Case      of t * (Pattern.t * t) list * Loc.t * atr
     (* return statement           *) | Return    of t option
     (* ignore a value             *) | Ignore    of t
-    (* unit value                 *) | Unit
     (* entering the scope         *) | Scope     of (string * decl) list * t
     (* lambda expression          *) | Lambda    of string list * t
     (* leave a scope              *) | Leave
     (* intrinsic (for evaluation) *) | Intrinsic of (t config, t config) arrow
     (* control (for control flow) *) | Control   of (t config, t * t config) arrow
-    and named_ast = {node_name : string; ast : t} (* introducing named nodes of AST tree -- every single node has been named *)
     and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t
                                                                 | `Variable of t option
                                                                 | `UseWithType of Typing.t]
     with show, html
-
-    let generator_index = 0
-    let name_node ast_node =
-      generator_index = generator_index + 1;
-      let generated_name = Printf.sprintf "node_%d" generator_index in
-      {node_name = generated_name; ast = ast_node}
-
-    let unname_node {node_name; ast} = ast
-
 
     let notRef = function Reff -> false | _ -> true
     let isVoid = function Void | Weak -> true  | _ -> false
@@ -618,8 +607,6 @@ module Expr =
               defs)
          in
          eval (State.push st (State.from_list bnds) vars, i, o, vs) k (Seq (body, Leave))
-      | Unit ->
-         eval (st, i, o, Value.Empty :: vs) Skip k
       | Ignore s ->
          eval conf k (schedule_list [s; Intrinsic (fun (st, i, o, vs) -> (st, i, o, List.tl vs))])
       | Control f ->

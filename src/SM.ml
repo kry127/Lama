@@ -787,8 +787,6 @@ let compile cmd ((imports, infixes), p) =
      let env = List.fold_left (fun env (name, args, m, b) -> env#add_fun name args m b) env funs in
      let env, flag, code = compile_expr tail l env e in
      env#pop_scope, flag, [SLABEL blab] @ code @ [SLABEL elab]
- 
-  | Expr.Unit               -> env, false, [CONST 0]
                                
   | Expr.Ignore   s         -> let ls, env = env#get_label in
                                add_code (compile_expr tail ls env s) ls false [DROP]                             
