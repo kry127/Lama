@@ -50,6 +50,7 @@ class options args =
     "  -I <path> --- add <path> into unit search path list\n" ^
     "  -i        --- interpret on a source-level interpreter\n" ^
     "  -s        --- compile into stack machine code and interpret on the stack machine initerpreter\n" ^
+    "  -g        --- compile with debug information\n" ^
     "  -dp       --- dump AST (the output will be written into .ast file)\n" ^
     "  -ds       --- dump stack machine code (the output will be written into .sm file; has no\n" ^
     "                effect if -i option is specfied)\n" ^
@@ -188,8 +189,12 @@ let checkLoggerIfError = fun () ->
     then (Printf.eprintf "Errors occured!\n%s\n" (Language.Logger.show ()); exit 255)
     
 let outputWarnings = fun() ->
-    if Language.Logger.has_warnings () && not (Language.Logger.has_errors ())
-    then Printf.eprintf "Warnings occured!\n %s\n" (Language.Logger.show ())
+    if Language.Logger.has_warnings ()
+    then Printf.eprintf "Warnings occured!\n%s\n" (Language.Logger.show ())
+
+let outputInfos = fun() ->
+    if Language.Logger.has_infos ()
+    then Printf.eprintf "%s\n" (Language.Logger.show ())
   
 let main =
   try 
@@ -199,7 +204,7 @@ let main =
     let parseResult = try parse cmd with Language.Semantic_error msg -> `Fail msg in
     match parseResult with
     | `Ok untyped_prog ->
-       checkLoggerIfError ();
+       checkLoggerIfError (); (* If errors occured, tear down *)
        let prog = if cmd#get_typecheck then Typecheck.typecheck untyped_prog else untyped_prog in
        checkLoggerIfError();
        cmd#dump_AST (snd prog);

@@ -360,13 +360,13 @@ let type_check ctx expr =
                                         let (pattern_type, ctx_layer) = infer_pattern_type pattern in
                                         (* Check conformity with main pattern *)
                                         if not (conforms pattern_type t_match_expr)
-                                        then report_error ~loc:(Some loc) "branch does not match anything (useless)"
+                                        then Logger.add_warning ~loc:(Some loc) "branch does not match anything (useless)"
                                         else begin
                                           (* Then check conformity with upper patterns *)
                                           for j = 0 to i - 1 do
                                            (* see instance0012: subtyping is used when less specified type occurs below more specified: *)
                                             if subtype pattern_type pattern_types.(j)
-                                            then report_error ~loc:(Some loc) "branch is unreachable (already covered)"
+                                            then Logger.add_warning ~loc:(Some loc) "branch is unreachable (already covered)"
                                             else ();
                                           done;
                                           (* We have useful branch here *)
@@ -377,7 +377,7 @@ let type_check ctx expr =
                                       (* Extra check that all branches have been covered *)
                                       let b_type = union_contraction (TUnion(Array.to_list pattern_types)) in
                                         if not (subtype t_match_expr (b_type))
-                                        then report_error ~loc:(Some loc) (Printf.sprintf "branches \"%s\" do not cover target type \"%s\"" (show(Typing.t) b_type) (show(Typing.t) t_match_expr));
+                                        then Logger.add_warning ~loc:(Some loc) (Printf.sprintf "branches \"%s\" do not cover target type \"%s\"" (show(Typing.t) b_type) (show(Typing.t) t_match_expr));
                                       let return_types, e_branches_impl = List.split (Array.to_list returns) in
                                       let e_branches = List.map2 (fun (pat, _) impl -> pat, impl) branches e_branches_impl in
                                       (* Then return accumulated return types in one TUnion type *)

@@ -56,7 +56,7 @@ let report_error ?(loc=None) str =
   raise (Semantic_error (str ^ match loc with None -> "" | Some (l, c) -> Printf.sprintf " at (%d, %d)" l c));;
 
 
-(* This module is for warnings and errors (instead of report_error *)
+(* This module is for warnings and errors (soft analoug of report_error *)
 (* Hint: now try to find Logger.add_error along with report_error *)
 (* honestly, can be separated away from here to other file *)
 module Logger =
@@ -268,13 +268,10 @@ module State =
 
     (* Undefined state *)
     let undefined x =
-      Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x)); Value.Empty
-
-    let undefined_designation x =
-      Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x)); (Value.Global "undefined_global")
+      report_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x))
 
     (* Create a state from bindings list *)
-    let from_list l = fun x -> try List.assoc x l with Not_found -> Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x)); Value.Empty
+    let from_list l = fun x -> try List.assoc x l with Not_found -> report_error ~loc:(Loc.get x) (Printf.sprintf "undefined name \"%s\"" (Subst.subst x))
 
     (* Bind a variable to a value in a state *)
     let bind x v s = fun y -> if x = y then v else s y
@@ -298,18 +295,14 @@ module State =
          if is_var x scope
          then G (scope, bind x v s)
          else (
-           (* report_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" is undefined or does not designate a variable" (Subst.subst x)) *)
-           Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" is undefined or does not designate a variable" (Subst.subst x));
-           G(scope, s)
+           report_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" is undefined or does not designate a variable" (Subst.subst x))
          )
       | L (scope, s, enclosing) ->
          if in_scope x scope
          then if is_var x scope
               then L (scope, bind x v s, enclosing)
               else (
-                (* report_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" does not designate a variable" (Subst.subst x)) *)
-                 Logger.add_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" does not designate a variable" (Subst.subst x));
-                 L(scope, s, enclosing)
+                report_error ~loc:(Loc.get x) (Printf.sprintf "name \"%s\" does not designate a variable" (Subst.subst x))
               )
          else L (scope, s, inner enclosing)
       in
@@ -844,11 +837,7 @@ module Expr =
           if ((* UGLY! *) Obj.magic !predefined_op) infix s
           then (
             if s = ":="
-            then (
-              (* report_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"") *)
-              Logger.add_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"");
-              ignore atr Skip
-            )
+            then  report_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"")
             else
               let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (Var name)
           )
@@ -1186,26 +1175,15 @@ module Definition =
           | `Ok infix' -> unopt_mod m, op, name, infix', true
           | `Fail msg  -> report_error ~loc:(Some l#coord) msg
       };
-      (* local_var[m][infix]: l:$ name:LIDENT value:(-"=" exprBasic[infix][Expr.Val])? {
-        Loc.attach name l#coord;
-        match m, value with
-        | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
-        | _               -> name, (m,`Variable value)
-      }; *)
-
       local_var[m][infix]: l:$ name:LIDENT typ:(-"::" $ !(Typing.typeParser))? value:(-"=" exprBasic[infix][Expr.Val])? {
         Loc.attach name l#coord;
         let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
         (* TODO add typeNode info as separate `UseWithType declaration *)
         (* debug output *)
-        (* let (typl, typc) = match typ with | Some (ttl, _) -> ttl#coord | None -> l#coord in
-        Printf.printf "Found type \"%s\" in local variable \"%s\" (pos: \"%d, %d\").\n" (show(Typing.t) typeNode) name typl typc; *)
+        let location = match typ with | Some (ttl, _) -> ttl | None -> l in
+        Logger.add_info ~loc:(Some location#coord) (Printf.sprintf "Found type \"%s\" in local variable \"%s\"" (show(Typing.t) typeNode) name);
         match m, value with
-          | `Extern, Some _ -> (
-                                (* report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name) *)
-                                Logger.add_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name);
-                                name, (m, `Variable value)
-                               )
+          | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
           | _               -> name, (m,`Variable value)
       };
 
@@ -1217,9 +1195,9 @@ module Definition =
     | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[Pattern.parse] -")"
            -typ:(-"::" $ !(Typing.typeParser))?
           (l:$ "{" body:exprScope[infix'][Expr.Weak] "}" {
-            if flag && List.length args != 2 then Logger.add_error ~loc:(Some l#coord) "infix operator should accept two arguments";
+            if flag && List.length args != 2 then report_error ~loc:(Some l#coord) "infix operator should accept two arguments";
             (match m with
-            | `Extern -> Logger.add_error ~loc:(Some l#coord) (Printf.sprintf "a body for external function \"%s\" can not be specified" (Subst.subst orig_name))
+            | `Extern -> report_error ~loc:(Some l#coord) (Printf.sprintf "a body for external function \"%s\" can not be specified" (Subst.subst orig_name))
             | _   -> ());
             let args, body =
               List.fold_right
@@ -1239,12 +1217,7 @@ module Definition =
          l:$ ";" {
             match m with
             | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix'
-            | _       -> (
-                          (* report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name) *)
-                          Logger.add_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name);
-                          (* But just in case define empty function { } as in upper case *)
-                          [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix'
-            )
+            | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)
          })
     ) in parse
 

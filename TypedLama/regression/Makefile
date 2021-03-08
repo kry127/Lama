@@ -2,7 +2,7 @@ TESTS=$(sort $(basename $(wildcard test*.lama)))
 
 RUNTIME_PATH=../../runtime
 STDLIB_PATH=../../stdlib
-LAMAC=../../src/lamac -tc -I $(STDLIB_PATH)
+LAMAC=../../src/lamac -tc -dp -I $(STDLIB_PATH)
 
 .PHONY: check $(TESTS)
 
@@ -15,4 +15,4 @@ $(TESTS): %: %.lama
 	LAMA=$(RUNTIME_PATH) $(LAMAC) $< && cat input/$@.input | ./$@ > actual/$@.log && diff expected/$@.log actual/$@.log
 
 clean:
-	$(RM) actual/test*.log *.s *.sm *~ $(TESTS) *.i
+	$(RM) actual/test*.log test*.s test*.sm test*.html *~ $(TESTS) *.i
