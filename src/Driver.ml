@@ -195,6 +195,10 @@ let outputWarnings = fun() ->
 let outputInfos = fun() ->
     if Language.Logger.has_infos ()
     then Printf.eprintf "%s\n" (Language.Logger.show ())
+
+let typecheckWrapper ((imports, infixes), untypedAst) =
+    let typeOfAst, astWithCasts = Language.Expr.Typecheck.typecheck untypedAst in
+    ((imports, infixes), astWithCasts)
   
 let main =
   try 
@@ -205,7 +209,7 @@ let main =
     match parseResult with
     | `Ok untyped_prog ->
        checkLoggerIfError (); (* If errors occured, tear down *)
-       let prog = if cmd#get_typecheck then Typecheck.typecheck untyped_prog else untyped_prog in
+       let prog = if cmd#get_typecheck then typecheckWrapper untyped_prog else untyped_prog in
        checkLoggerIfError();
        cmd#dump_AST (snd prog);
        (match cmd#get_mode with
