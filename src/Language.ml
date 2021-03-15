@@ -125,6 +125,64 @@ module Logger =
 
 @type k = Unmut | Mut | FVal with show, html
 
+
+(* User typing information *)
+module Typing =
+(*
+  This information is not used somehow by interpreter or compiler. The only sole purpose of this structure is to
+  be embedded in AST for further analysis
+
+  Type system: Gradual Typing
+  Most important type relation: ~ (called consistency)
+
+  Think about: should we do recursive types and how to declare them in Lama
+ *)
+struct
+ @type t =
+ (* any type, \forall t. TAny ~ t /\ t ~ TAny        *) | TAny
+ (* integer constant type                            *) | TConst
+ (* array of elements of specified type              *) | TArr of t
+ (* string type                                      *) | TString
+ (* S-expression type                                *) | TSexp of string * t list
+ (* Reference type (really, it is one-element array) *) | TRef of t
+ (* Arrow type (function call)                       *) | TLambda of t list * t
+ (* Union type (maybe we should use sum type?)       *) | TUnion of t list (* TODO make as set *)
+ (* Empty type (when no value returns from expr)     *) | TVoid (* == Union() *)
+ (* TODO Special type marker for undefined number of args | TVariadic  *)
+ (* TODO S-expression with arbitrary caption              | TSymbol  *)
+ (* E.g. TSymbol (TVariadic) == Any possible S-expression :) *)
+ (* Syntactic sugar: TOptional(t) = TUnion(t, TVoid) *)
+ with show, html
+
+   (* Note: %"keyword" for keywords (DO NOT USE IT), but "[" for regular syntax should be used in parser *)
+   (* TODO what is the difference between Util.list and Util.list0 ? *)
+   (* Answer: list0 also parses empty list :) *)
+   ostap (
+     (* Use "typeParser" to parse type information *)
+     typeParser: unionParser | arrowParser | sexpParser | arrayParser | anyParser;
+     anyParser: "?" {TAny};
+     arrayParser: "[" inner:typeParser "]" {TArr (inner)};
+     sexpParser: label: UIDENT maybeTypelist:(-"(" !(Util.list0)[typeParser] -")")? {
+       match maybeTypelist with
+         | Some(typeList) -> TSexp (label, typeList)
+         | None -> match label with
+           | "Int"  -> TConst
+           | "Str"  -> TString
+           | "Void" -> TVoid
+            (* If this is not ground type, we explicitly add circle brackets *)
+           | sexpLabel -> TSexp(label, [])
+     };
+     arrowParser:
+         premise:!(Util.listBy)[ostap("->")][typeParser] "~>" conclusion:typeParser { TLambda (premise, conclusion) }
+       |                                            "()" "~>" conclusion:typeParser { TLambda ([]     , conclusion) };
+     unionParser: "Union" "[" typelist:!(Util.listBy)[ostap(",")][typeParser] "]" {TUnion typelist}
+   )
+
+   let etaExpand _type = match _type with
+     | TLambda (arg1::args, result) -> TLambda(arg1::[], TLambda (args, result))
+     | _                       -> _type
+end
+
 (* Values *)
 module Value =
   struct
@@ -149,6 +207,7 @@ module Value =
     | Closure of string list * 'a * 'b
     | FunRef  of string * string list * 'a * int
     | Builtin of string
+    (* | Cast    of ('a, 'b) t * Typing.t * string * bool *)
     with show, html
 
     let is_int = function Int _ -> true | _ -> false
@@ -410,63 +469,6 @@ module Pattern =
 
   end
 
-(* User typing information *)
-module Typing =
-(*
-  This information is not used somehow by interpreter or compiler. The only sole purpose of this structure is to
-  be embedded in AST for further analysis
-
-  Type system: Gradual Typing
-  Most important type relation: ~ (called consistency)
-
-  Think about: should we do recursive types and how to declare them in Lama
- *)
-struct
- @type t =
- (* any type, \forall t. TAny ~ t /\ t ~ TAny        *) | TAny
- (* integer constant type                            *) | TConst
- (* array of elements of specified type              *) | TArr of t
- (* string type                                      *) | TString
- (* S-expression type                                *) | TSexp of string * t list
- (* Reference type (really, it is one-element array) *) | TRef of t
- (* Arrow type (function call)                       *) | TLambda of t list * t
- (* Union type (maybe we should use sum type?)       *) | TUnion of t list (* TODO make as set *)
- (* Empty type (when no value returns from expr)     *) | TVoid (* == Union() *)
- (* TODO Special type marker for undefined number of args | TVariadic  *)
- (* TODO S-expression with arbitrary caption              | TSymbol  *)
- (* E.g. TSymbol (TVariadic) == Any possible S-expression :) *)
- (* Syntactic sugar: TOptional(t) = TUnion(t, TVoid) *)
- with show, html
-
-   (* Note: %"keyword" for keywords (DO NOT USE IT), but "[" for regular syntax should be used in parser *)
-   (* TODO what is the difference between Util.list and Util.list0 ? *)
-   (* Answer: list0 also parses empty list :) *)
-   ostap (
-     (* Use "typeParser" to parse type information *)
-     typeParser: unionParser | arrowParser | sexpParser | arrayParser | anyParser;
-     anyParser: "?" {TAny};
-     arrayParser: "[" inner:typeParser "]" {TArr (inner)};
-     sexpParser: label: UIDENT maybeTypelist:(-"(" !(Util.list0)[typeParser] -")")? {
-       match maybeTypelist with
-         | Some(typeList) -> TSexp (label, typeList)
-         | None -> match label with
-           | "Int"  -> TConst
-           | "Str"  -> TString
-           | "Void" -> TVoid
-            (* If this is not ground type, we explicitly add circle brackets *)
-           | sexpLabel -> TSexp(label, [])
-     };
-     arrowParser:
-         premise:!(Util.listBy)[ostap("->")][typeParser] "~>" conclusion:typeParser { TLambda (premise, conclusion) }
-       |                                            "()" "~>" conclusion:typeParser { TLambda ([]     , conclusion) };
-     unionParser: "Union" "[" typelist:!(Util.listBy)[ostap(",")][typeParser] "]" {TUnion typelist}
-   )
-
-   let etaExpand _type = match _type with
-     | TLambda (arg1::args, result) -> TLambda(arg1::[], TLambda (args, result))
-     | _                       -> _type
-end
-
 (* Simple expressions: syntax and semantics *)
 module Expr =
   struct
@@ -488,7 +490,7 @@ module Expr =
     (* string                     *) | String    of string
     (* S-expressions              *) | Sexp      of string * t list
     (* variable                   *) | Var       of string
-    (* cast                       *) | Cast      of t * Typing.t * string * bool * Loc.t
+    (* cast                       *) | Cast      of t * Typing.t * string * bool
     (* reference (aka "lvalue")   *) | Ref       of string
     (* binary operator            *) | Binop     of string * t * t
     (* element extraction         *) | Elem      of t * t
@@ -594,10 +596,30 @@ module Expr =
 
       module Conformity =
         struct
-          let tru, fls = Const 1, Const 0
           let tmp_name = "tmp" (* name for variable that stores everything *)
           let loc = (0, 0) (* TODO need to know real location, not fake one *)
 
+          (* check that type 'lhs' is materialization of type 'rhs' *)
+          let rec materialize lhs rhs
+            = match (lhs, rhs) with
+            | (_   , TAny) -> true  (* Anything is materialization of TAny, obviously. *)
+            | (TArr l, TArr r)
+            | (TRef l, TRef r) -> materialize l r
+            | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    name_l = name_r
+                                                                  && List.length types_l = List.length types_r
+                                                                  && List.compare_lengths types_l types_r == 0
+                                                                  && List.for_all2 materialize types_l types_r
+            (* Materialization relation required to be covariant by arguments *)
+            | (TLambda(args_l, body_l), TLambda(args_r, body_r)) ->
+                          List.compare_lengths args_l args_r == 0
+                       && List.for_all2 materialize args_l args_r
+                       && materialize body_l body_r
+
+            | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (materialize lel) rs) ls
+            | (tl       , TUnion rs) -> List.exists (materialize tl) rs
+            | (TUnion ls, tr       ) -> List.for_all (fun tl ->  materialize tl tr) ls
+
+            | (l, r) -> l = r (* TString, TConst, TVoid *)
 
           (* check that type 'lhs' is embedded in type 'rhs', or as you call it 'subtype'
              that function is similar to 'conforms' function *)
@@ -617,7 +639,7 @@ module Expr =
                        && subtype body_l body_r
 
             (* not really correct implementation of 'embedding' because of List.exists, but maybe OK for subtyping?...
-               Ex: Union[A(?, Y), A(X, ?)] <: Union[A(?, C), A(B, ?)] *)
+               Ex: Union[A(?, Y), A(X, ?)] <: Union[A(?, C), A(B, ?)], where Union[X, Y] = Union[B, C] *)
             | (TUnion ls, TUnion rs) -> List.for_all (fun lel -> List.exists (subtype lel) rs) ls
             | (tl       , TUnion rs) -> List.exists (subtype tl) rs
             | (TUnion ls, tr       ) -> List.for_all (fun tl ->  subtype tl tr) ls
@@ -649,62 +671,6 @@ module Expr =
             | (TUnion ls, tr       ) -> List.for_all (fun tl ->  conforms tl tr) ls
 
             | (l, r) -> l = r (* TString, TConst, TVoid *)
-
-          (* This function generates dynamic code check for target type 'ttype' with input open variable 'name' *)
-          let rec plain_gen name ttype =
-            match ttype with
-            | TAny    -> tru (* OK, expression is of type Any *)
-            | TConst  -> Case(Var(name), [(Pattern.UnBoxed,   tru); (Pattern.Wildcard, fls)], loc, Val)
-            | TString -> Case(Var(name), [(Pattern.StringTag, tru); (Pattern.Wildcard, fls)], loc, Val)
-            | TArr t     (* TODO think about making loop *)
-            | TRef t  -> Case(Var(name), [(Pattern.ArrayTag,  tru); (Pattern.Wildcard, fls)], loc, Val)
-            (* For lambdas we can only check that incoming object is really a function
-               It seems that there is NO WAY to check amount of args and return type in runtime.
-               Even more, function can accept value of any type by design *)
-            | TLambda (targs, tbody) -> Case(Var(name), [(Pattern.ClosureTag, tru); (Pattern.Wildcard, fls)], loc, Val)
-            | TSexp(sname, types) ->
-                   (* Generate names for new closure *)
-                   let gen_names = List.mapi (fun i _ -> Printf.sprintf "gen_%d" i) types in
-                   let gen_names_patterns = List.map (fun name -> Pattern.Named(name, Pattern.Wildcard)) gen_names in
-                   (* This one is generated AST's binded by '&&' binary operation *)
-                   let ast = List.fold_right2 (fun nm typ bool -> Binop("&&", plain_gen nm typ, bool)) gen_names types tru in
-                   (* Insert check in case body *)
-                   Case(Var(name), [(Pattern.Sexp(sname, gen_names_patterns), ast); (Pattern.Wildcard, fls)], loc, Val)
-            | TUnion(types) -> List.fold_right (fun typ els -> If(plain_gen name typ, tru, els)) types fls
-            | TVoid   -> tru (* Not sure what to do with no real value :) *)
-
-          (* Function inserts dynamic cast code for checking that 'expr' having known type 'lhs' would be casted to 'rhs' at runtime
-             Returns Some expression on successfull cast, and None otherwise *)
-          let generate_cast expr lhs rhs =
-            (* Wrap check if needed with apropriate anonymous function call *)
-            let var_name = "expr" in
-            if conforms lhs rhs
-            then
-              if rhs = TAny
-              (* lhs conforms rhs, but check is trivial *)
-              then Some(expr)
-              (* lhs conforms rhs with nontrivial check *)
-              else
-                let expr_checker = plain_gen var_name rhs in
-                Some (
-                  Call(
-                    Lambda([var_name],
-                      Seq(
-                        Ignore(
-                          If(expr_checker, (* initiate checking *)
-                                Skip,           (* if checker returns true, that's OK runtime expression *)
-                                Call(Var("failure"),
-                                [
-                                  String "Dynamic cast failed of expression \"%s\" to type \"%s\"!\\n";
-                                  StringVal(Var(var_name));
-                                  String (show(Typing.t) rhs)
-                                ])))
-                      , Var(var_name))) (* return value after check *)
-                    , [expr] (* Idea: calculate expr once, isolate variables from hiding and changing inside function *)
-                  )
-                )
-            (* lhs does not conforms rhs *)
-            else None
 
 
           (* Union contraction function *)
@@ -770,6 +736,7 @@ module Expr =
         let rec type_check_int ret_ht ctx expr
           = (* Printf.printf "Type checking \"%s\"...\n" (show(t) expr); *)
             match expr with
+            | Cast(_, t, _, _)      -> t, expr (* Trivial rule, but does it preserve soundness? *)
             | Const _               -> TConst, expr
             | Array values          -> let types, exprs = List.split( List.map (fun exp -> type_check_int ret_ht ctx exp) values) in
                                             TArr (union_contraction (TUnion types)), Array exprs
@@ -779,38 +746,37 @@ module Expr =
             | Var   name            -> Context.get_type ctx name, expr
             | Ref   name            -> TRef (Context.get_type ctx name), expr
             | Binop (op, exp1, exp2)-> let t1, e1 = type_check_int ret_ht ctx exp1 in
-                                            let t2, e2 = type_check_int ret_ht ctx exp2 in
-                                            if conforms t1 TConst && conforms t2 TConst
-                                            then
-                                              (* Already checked conformity, so we can safely match with 'Some' value *)
-                                              let Some cst_e1 = generate_cast e1 t1 TConst in
-                                              let Some cst_e2 = generate_cast e2 t2 TConst in
-                                              TConst, Binop(op, cst_e1, cst_e2)
-                                            (* TODO not enough info + NO LOCATION in 'report_error' *)
-                                            else report_error("Binary operations can be applied only to integers")
+                                       let t2, e2 = type_check_int ret_ht ctx exp2 in
+                                       if conforms t1 TConst && conforms t2 TConst
+                                       then
+                                         (* Already checked conformity, so we can safely match with 'Some' value *)
+                                         let cst_e1 = Cast (e1, TConst, "invalid left operand of operand" ^ op, true) in
+                                         let cst_e2 = Cast (e1, TConst, "invalid right operand of operand" ^ op, true) in
+                                         TConst, Binop(op, cst_e1, cst_e2)
+                                       (* TODO not enough info + NO LOCATION in 'report_error' *)
+                                       else report_error("Binary operations can be applied only to integers")
             | ElemRef (arr, index) (* Both normal and inplace versions, but I don't know result type of ElemRef... *)
             | Elem (arr, index)     -> let t_arr, e_arr     = type_check_int ret_ht ctx arr   in
-                                            let t_index, e_index = type_check_int ret_ht ctx index in
-                                            if conforms t_index TConst
-                                            then
-                                              (* Cast index to integer and repack AST *)
-                                              let Some e_index_cst = generate_cast e_index t_index TConst in
-                                              let repacked_ast = match expr with
-                                                  | ElemRef (arr, index) -> ElemRef(arr, e_index_cst)
-                                                  | Elem    (arr, index) -> Elem   (arr, e_index_cst)
-                                              in
-                                              match t_arr with
-                                                   | TAny            -> TAny, repacked_ast
-                                               (* Indexing to string returns char code, see ".elem" in Language.ml *)
-                                                   | TString         -> TConst, repacked_ast
-                                                   | TArr(elem_type) -> elem_type, repacked_ast
-                                                (* TODO constant propagation for retrieving type like this: *)
-                                                (*  | TSexp(name, typeList)  -> List.nth_opt typeList (Language.eval index []) *)
-
-                                                   | TSexp(name, type_list)  -> TUnion (type_list), repacked_ast (* Breaks type safety: UB when index out of bounds *)
-
-                                                   | _ -> report_error("Indexing can be performed on strings, arrays and S-expressions only") (* TODO NO LOCATION *)
-                                            else report_error("Indexing can be done only with integers") (* TODO NO LOCATION *)
+                                       let t_index, e_index = type_check_int ret_ht ctx index in
+                                       if conforms t_index TConst
+                                       then
+                                         (* Cast index to integer and repack AST *)
+                                         let e_index_cst = Cast (e_index, TConst, "index is not a number", false) in
+                                         let repacked_ast = match expr with
+                                             | ElemRef (arr, index) -> ElemRef(arr, e_index_cst)
+                                             | Elem    (arr, index) -> Elem   (arr, e_index_cst)
+                                         in
+                                         match t_arr with
+                                              | TAny            -> TAny, repacked_ast
+                                          (* Indexing to string returns char code, see ".elem" in Language.ml *)
+                                              | TString         -> TConst, repacked_ast
+                                              | TArr(elem_type) -> elem_type, repacked_ast
+                                           (* TODO constant propagation for retrieving type like this: *)
+                                              (*| TSexp(name, typeList)  -> List.nth_opt typeList (Language.eval index [])
+                                              | TSexp(name, type_list)  -> TUnion (type_list), repacked_ast (* Breaks type safety: UB when index out of bound *)
+                                              *)
+                                              | _ -> report_error("Indexing can be performed on strings, arrays and S-expressions only") (* TODO NO LOCATION *)
+                                       else report_error("Indexing can be done only with integers") (* TODO NO LOCATION *)
             | Length (exp)          -> let t_exp, e_exp = type_check_int ret_ht ctx exp in
                                             let ret_type = match t_exp with
                                                            | TString | TArr(_) | TSexp(_, _) | TAny -> TConst
@@ -819,32 +785,31 @@ module Expr =
             | StringVal (exp)       -> let _, e_exp = type_check_int ret_ht ctx exp in
                                             TString, e_exp (* The most plesant rule: anything can be matched to a string *)
             | Call(f, args)         -> let t_f, e_f = type_check_int ret_ht ctx f in
-                                            let t_args, e_args = List.split (List.map (fun arg -> type_check_int ret_ht ctx arg) args) in
-                                            let rec ret_func t_ff =
-                                              match t_ff with
-                                              | TAny -> TAny, Call(e_f, e_args)
-                                              | TLambda (premise, conclusion) ->
-                                                if try List.for_all2 conforms t_args premise
-                                                   with Invalid_argument(_) -> report_error("Arity mismatch in function call") (* TODO NO 'TVariadic' SUPPORT *)
-                                                then (* In 'then' branch each expression from t_args conform to the premise of function *)
-                                                   (* Step 1. cast all arguments to the input type of the function *)
-                                                   let cast_args = List.map2 (fun (ex, tl) tr -> let Some ex_cst = generate_cast ex tl tr in ex_cst)
-                                                                             (List.combine e_args t_args) premise in
-                                                   (* Step 2. then perform call of the function *)
-                                                   let call_func = Call(e_f, cast_args) in
-                                                   (* Step 3. cast result of the function to the resulting type *)
-                                                   let Some casted_call_func = generate_cast call_func TAny conclusion in
-                                                     conclusion, casted_call_func
-
-                                                else report_error("Argument type mismatch in function call") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
-                                              | TUnion (ffs) -> union_contraction (TUnion (
-                                                                  List.filter_map (* Combine filtering and mapping at the same time *)
-                                                                  (* If no exception comes out, give out type as is, otherwise nothing returned *)
-                                                                  (fun f -> try Some (fst (ret_func f)) with _ -> None)
-                                                                  ffs
-                                                                )), Call(e_f, e_args)
-                                              | _ -> report_error("Cannot perform a call for non-callable object")
-                                            in ret_func t_f
+                                       let t_args, e_args = List.split (List.map (fun arg -> type_check_int ret_ht ctx arg) args) in
+                                       let rec ret_func t_ff =
+                                         match t_ff with
+                                         | TAny -> TAny, Call(e_f, e_args)
+                                         | TLambda (premise, conclusion) ->
+                                           if try List.for_all2 conforms t_args premise
+                                              with Invalid_argument(_) -> report_error("Arity mismatch in function call") (* TODO NO 'TVariadic' SUPPORT *)
+                                           then (* In 'then' branch each expression from t_args conform to the premise of function *)
+                                              (* Step 1. cast all arguments to the input type of the function *)
+                                              let cast_args = List.map2 (fun (ex, tl) tr -> Cast(ex, tr, "invalid argument passed", true))
+                                                                        (List.combine e_args t_args) premise in
+                                              (* Step 2. then perform call of the function *)
+                                              let call_func = Call(e_f, cast_args) in
+                                              (* Step 3. cast result of the function to the resulting type *)
+                                              let casted_call_func = Cast(call_func, conclusion, "function returned value with unexpected type", true) in
+                                                conclusion, casted_call_func
+                                           else report_error("Argument type mismatch in function call") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
+                                         | TUnion (ffs) -> union_contraction (TUnion (
+                                                             List.filter_map (* Combine filtering and mapping at the same time *)
+                                                             (* If no exception comes out, give out type as is, otherwise nothing returned *)
+                                                             (fun f -> try Some (fst (ret_func f)) with _ -> None)
+                                                             ffs
+                                                           )), Call(e_f, e_args)
+                                         | _ -> report_error("Cannot perform a call for non-callable object")
+                                       in ret_func t_f
             | Assign(reff, exp)     -> let t_reff, e_reff = type_check_int ret_ht ctx reff in
                                             let t_exp, e_exp  = type_check_int ret_ht ctx exp  in
                                             let ret =
@@ -852,7 +817,7 @@ module Expr =
                                               | TAny -> TAny, Assign(e_reff, e_exp)
                                               | TRef (t_x) -> if conforms t_exp t_x
                                                               then
-                                                                let Some e_exp_cst = generate_cast e_exp t_exp t_x in
+                                                                let e_exp_cst = Cast(e_exp, t_x, "assignment cast failed", true) in
                                                                 t_x, Assign(e_reff, e_exp_cst)
                                                               else report_error("Cannot assign a value with inappropriate type")
                                             in ret
@@ -866,7 +831,7 @@ module Expr =
                                             let t_rbr,  e_rbr  = type_check_int ret_ht ctx rbr  in
                                             if conforms t_cond TConst
                                             then
-                                              let Some e_cond_cst = generate_cast e_cond t_cond TConst in
+                                              let e_cond_cst = Cast(e_cond, TConst, "if condition didn't evaluate to boolean", true) in
                                               union_contraction (TUnion(t_lbr :: t_rbr :: []))
                                               , If(e_cond_cst, e_lbr, e_rbr)
                                             else report_error("If condition should be logical value class") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
@@ -875,7 +840,7 @@ module Expr =
                                             let t_body, e_body = type_check_int ret_ht ctx body in
                                             if conforms t_cond TConst
                                             then
-                                              let Some e_cond_cst = generate_cast e_cond t_cond TConst in
+                                              let e_cond_cst = Cast(e_cond, TConst, "cycle condition didn't evaluate to boolean", true) in
                                               let repacked_ast = match expr with
                                               | While (cond, body) -> While (e_cond_cst, e_body)
                                               | Repeat(body, cond) -> Repeat(e_body, e_cond_cst)
@@ -956,12 +921,12 @@ module Expr =
                                             let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
                                             t_expr, Scope(decls, e_expr)
             | Lambda(args, body)    ->  (* collect return yielding types and join with this type with TUnion *)
-                                            let sub_ret_ht = (TypeHsh.create 128) in
-                                            let t_body, e_body = type_check_int sub_ret_ht (Context.expand ctx) body in
-                                            let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
-                                                              [t_body] (TypeHsh.to_seq_keys sub_ret_ht) in
-                                            let l_ret_type = union_contraction (TUnion(union_types)) in
-                                            TLambda(List.map (fun _ -> TAny) args, l_ret_type), Lambda(args, e_body)
+                                        let sub_ret_ht = (TypeHsh.create 128) in
+                                        let t_body, e_body = type_check_int sub_ret_ht (Context.expand ctx) body in
+                                        let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
+                                                          [t_body] (TypeHsh.to_seq_keys sub_ret_ht) in
+                                        let l_ret_type = union_contraction (TUnion(union_types)) in
+                                        TLambda(List.map (fun _ -> TAny) args, l_ret_type), Lambda(args, e_body)
             | Leave                 -> report_error("Cannot infer the type for internal compiler node 'Leave'")
             | Intrinsic (_)         -> report_error("Cannot infer the type for internal compiler node 'Intrinsic'")
             | Control   (_)         -> report_error("Cannot infer the type for internal compiler node 'Control'")
@@ -1067,12 +1032,12 @@ module Expr =
            | v -> v
          in
          eval (st, i, o, v :: vs) Skip k
-      | Cast (e, t, label, positive, loc) ->
+      | Cast (e, t, label, positive) ->
            let inferedType, newExpr = Typecheck.typecheck e in
            if not (Typecheck.Conformity.conforms inferedType t)
            then (
              let posAsStr = if positive then "+" else "-" in
-             report_error ~loc:(Some loc) (Printf.sprintf "Cast%s failed: \"%s\"\n" posAsStr label)
+             report_error ~loc:None (Printf.sprintf "Cast%s failed: \"%s\"\n" posAsStr label)
            )
            else eval (st, i, o, vs) newExpr k
       | Ref x ->
@@ -1089,21 +1054,31 @@ module Expr =
          eval conf k (schedule_list [b; i; Intrinsic (fun (st, i, o, j::b::vs) -> (st, i, o, (Value.Elem (b, Value.to_int j))::vs))])
       | Length e ->
          eval conf k (schedule_list [e; Intrinsic (fun (st, i, o, v::vs) -> Builtin.eval (st, i, o, vs) [v] ".length")])
-      | Call (f, args) ->
-         eval conf k (schedule_list (f :: args @ [Intrinsic (fun (st, i, o, vs) ->
-            let es, vs' = take (List.length args + 1) vs in
-            let f :: es = List.rev es in
-            (match f with
-             | Value.Builtin name ->
-                Builtin.eval (st, i, o, vs') es name
-             | Value.Closure (args, body, closure) ->
-                let st' = State.push (State.leave st closure.(0)) (State.from_list @@ List.combine args es) (List.map (fun x -> x, Mut) args) in
-                let st'', i', o', vs'' = eval (st', i, o, []) Skip body in
-                closure.(0) <- st'';
-                (State.leave st'' st, i', o', match vs'' with [v] -> v::vs' | _ -> Value.Empty :: vs')
-             | _ -> report_error (Printf.sprintf "callee did not evaluate to a function: \"%s\"" (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") f))
-            ))]))
-
+      | Call (f, args) -> (
+         match f with
+         | Cast(f, t, msg, polarity) -> (match t with
+           | TAny -> eval conf k (Call(f, args))
+           | TLambda(t_args, t_body) ->
+               let negPosition = try List.map2 (fun arg targ -> Cast(arg, targ, msg, not polarity)) args t_args
+                                 with Invalid_argument(_) -> report_error("arguments more than expected type of function call")
+               in eval conf k (Cast(Call(f, negPosition), t_body, msg, polarity))
+           | _ -> report_error("attempt to call object casted to non-function type")
+         )
+         | _ ->
+             eval conf k (schedule_list (f :: args @ [Intrinsic (fun (st, i, o, vs) ->
+                  let es, vs' = take (List.length args + 1) vs in
+                  let f :: es = List.rev es in
+                  (match f with
+                   | Value.Builtin name ->
+                      Builtin.eval (st, i, o, vs') es name
+                   | Value.Closure (args, body, closure) ->
+                      let st' = State.push (State.leave st closure.(0)) (State.from_list @@ List.combine args es) (List.map (fun x -> x, Mut) args) in
+                      let st'', i', o', vs'' = eval (st', i, o, []) Skip body in
+                      closure.(0) <- st'';
+                      (State.leave st'' st, i', o', match vs'' with [v] -> v::vs' | _ -> Value.Empty :: vs')
+                   | _ -> report_error (Printf.sprintf "callee did not evaluate to a function: \"%s\"" (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") f))
+                  ))]))
+        )
       | Leave  -> eval (State.drop st, i, o, vs) Skip k
       | Assign (x, e)  ->
          eval conf k (schedule_list [x; e; Intrinsic (fun (st, i, o, v::x::vs) -> (update st x v, i, o, v::vs))])
