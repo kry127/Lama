@@ -173,8 +173,8 @@ struct
            | sexpLabel -> TSexp(label, [])
      };
      arrowParser:
-         premise:!(Util.listBy)[ostap("->")][typeParser] "~>" conclusion:typeParser { TLambda (premise, conclusion) }
-       |                                            "()" "~>" conclusion:typeParser { TLambda ([]     , conclusion) };
+         premise:!(Util.listBy)[ostap(",")][typeParser] "->" conclusion:typeParser { TLambda (premise, conclusion) }
+       |                                            "()" "->" conclusion:typeParser { TLambda ([]     , conclusion) };
      unionParser: "Union" "[" typelist:!(Util.listBy)[ostap(",")][typeParser] "]" {TUnion typelist}
    )
 
