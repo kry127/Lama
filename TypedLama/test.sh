@@ -2,4 +2,6 @@
 
 pushd regression
 make regression
+exitCode=$?
 popd
+exit $exitCode
