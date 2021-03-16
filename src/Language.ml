@@ -687,7 +687,10 @@ module Expr =
                            else union_contraction_pass (t :: res) ts
               | []      -> res
             in match utype with
-            | TUnion (tts) -> TUnion(union_contraction_pass [] (union_contraction_pass [] tts)) (* make two passes *)
+            | TUnion (tts) -> let ttsnew = union_contraction_pass [] (union_contraction_pass [] tts) in (* make two passes *)
+                              if List.length ttsnew == 1
+                              then List.nth ttsnew 0
+                              else TUnion(ttsnew)
             | _            -> report_error("Union contraction expects TUnion")
 
         end
@@ -748,14 +751,16 @@ module Expr =
             | Ref   name            -> TRef (Context.get_type ctx name), expr
             | Binop (op, exp1, exp2)-> let t1, e1 = type_check_int ret_ht ctx exp1 in
                                        let t2, e2 = type_check_int ret_ht ctx exp2 in
-                                       if conforms t1 TConst && conforms t2 TConst
-                                       then
+                                       (* TODO not enough info + NO LOCATION in 'report_error' *)
+                                       if not (conforms t1 TConst)
+                                       then report_error(Printf.sprintf "left binary operand of type \"%s\" does not conforms to TConst" (show(t) t1))
+                                       else if not (conforms t2 TConst)
+                                       then report_error(Printf.sprintf "right binary operand of type \"%s\" does not conforms to TConst" (show(t) t2))
+                                       else
                                          (* Already checked conformity, so we can safely match with 'Some' value *)
                                          let cst_e1 = Cast (e1, TConst, "invalid left operand of operand" ^ op, true) in
                                          let cst_e2 = Cast (e2, TConst, "invalid right operand of operand" ^ op, true) in
                                          TConst, Binop(op, cst_e1, cst_e2)
-                                       (* TODO not enough info + NO LOCATION in 'report_error' *)
-                                       else report_error("Binary operations can be applied only to integers")
             | ElemRef (arr, index) (* Both normal and inplace versions, but I don't know result type of ElemRef... *)
             | Elem (arr, index)     -> let t_arr, e_arr     = type_check_int ret_ht ctx arr   in
                                        let t_index, e_index = type_check_int ret_ht ctx index in
@@ -931,7 +936,10 @@ module Expr =
                                        t_expr, Scope(decls, e_expr)
             | Lambda(args, body)    ->  (* collect return yielding types and join with this type with TUnion *)
                                         let sub_ret_ht = (TypeHsh.create 128) in
-                                        let t_body, e_body = type_check_int sub_ret_ht (Context.expand ctx) body in
+                                        (* Assume that argument types are of type TAny *)
+                                        let exp_context = List.fold_right (fun name ctx -> Context.extend ctx name TAny)
+                                                                               args (Context.expand ctx) in
+                                        let t_body, e_body = type_check_int sub_ret_ht exp_context body in
                                         let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
                                                           [t_body] (TypeHsh.to_seq_keys sub_ret_ht) in
                                         let l_ret_type = union_contraction (TUnion(union_types)) in

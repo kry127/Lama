@@ -1,0 +1,31 @@
+-- check parsing of union and arrows
+local x :: Union[Int, Union[Str, Int]] = 1;
+local z :: Union[Int, Str] -> Union[Str, Int];
+local y :: Union[Int -> Str, Str -> Int];
+
+-- check parsing of arrays
+local arr1 :: [?];
+local arr2 :: [Union[Str, Int]];
+local arr3 :: Union[[Str], [Int], [Str] -> [Int]];
+local arr4 :: [Int] = [1, 4, 6, 2, 6, 2, 5, 6, 3];
+local arr5 :: [Str] = ["here", "is", "JOHNNY"];
+
+-- sexpressions
+local sexp1 :: X;
+local sexp2 :: Y(?, Str, Whois(Str)) = Y(Combinator, "xyzzy", Whois("Yandex"));
+local sexp3 :: Union[X, X()] = X; -- This is the same types, here is check
+local sexp3_checker :: X -> Void = fun (x) { return };
+local sexp3_ok = sexp3_checker (sexp3); -- checks union contraction
+local sexp4 :: Union[Str, Str()]; -- Str is string, Str() is Sexp
+
+-- functions
+local f1 :: Int -> Int = fun(x) { 2 * x }; -- bug found. Reaches the top type and thinks that value is not applicable here
+local f2 :: () -> Int -> ? -- we have a problem -- if first closure accepts zero arguments, then the lhs of '->' is empty :(
+  = fun() {
+      fun internal(x) :: Int -> ? {
+        XYZ
+      }
+      internal
+    };
+local f3 = eta f1; -- obviously, f3 has type () -> Int -> Int, but should lamac AST provide this info?
+Unit

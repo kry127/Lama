@@ -6,11 +6,11 @@ public fun id (x : Int) {
 }
 
 -- instead, we should annotate type of function in postfix notation
-public fun idTyped (x) :: Int ~> Int {
+public fun idTyped (x) :: Int -> Int {
   x
 }
 
-public fun kCombinatorTyped (x, y) :: Int -> String ~> Int {
+public fun kCombinatorTyped (x, y) :: Int, String -> Int {
   x
 }
 
