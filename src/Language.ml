@@ -512,9 +512,10 @@ module Expr =
     (* leave a scope              *) | Leave
     (* intrinsic (for evaluation) *) | Intrinsic of (t config, t config) arrow
     (* control (for control flow) *) | Control   of (t config, t * t config) arrow
-    and decl = [`Local | `Public | `Extern | `PublicExtern ] * [`Fun of string list * t
-                                                                | `Variable of t option
-                                                                | `UseWithType of Typing.t]
+    (* BTW, great example of decoupling of modules Expr and Definition! decl defined with universal lables *)
+    and decl = [`Local | `Public | `Extern | `PublicExtern ]
+                 * Typing.t option
+                 * [`Fun of string list * t | `Variable of t option]
     with show, html
 
     let notRef = function Reff -> false | _ -> true
@@ -890,36 +891,44 @@ module Expr =
             | Ignore(expr)             -> let _, e_expr = type_check_int ret_ht ctx expr in
                                                TVoid, Ignore(e_expr)
             (* decided, that Scope does not affect structure of the AST *)
-            | Scope(decls, expr)    -> let ctx_layer = List.fold_left (
-                                                              fun acc (name, decl) ->
-                                                                let expanded_ctx = Context.expandWith acc ctx in
-                                                                let type_in_expanded_ctx = Context.get_type expanded_ctx name in
-                                                                match decl with
-                                                                | (_, `Fun (args, body))
-                                                                      -> let sub_ret_ht = (TypeHsh.create 128) in (* Make fresh hashtable for returns in body *)
-                                                                         let type_body, _ =  type_check_int sub_ret_ht (Context.expand expanded_ctx) body; in
-                                                                         let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
-                                                                                           [type_body] (TypeHsh.to_seq_keys sub_ret_ht) in
-                                                                         let l_ret_type = union_contraction (TUnion(union_types)) in
-                                                                         let tc = TLambda (List.map (fun _ -> TAny) args, l_ret_type) in
-                                                                         if not (conforms tc type_in_expanded_ctx)
-                                                                            then report_error (
-                                                                              Printf.sprintf "Function \"%s\" having type \"%s\" doesn't conforms declared type %s."
-                                                                              name (show(Typing.t) tc) (show(Typing.t) type_in_expanded_ctx)
-                                                                            );
-                                                                         acc
-                                                                | (_, `Variable (maybe_def))
-                                                                      -> let tc = match maybe_def with | Some def -> fst (type_check_int ret_ht expanded_ctx def) | None -> TAny;
-                                                                         in if not (conforms tc type_in_expanded_ctx)
-                                                                            then report_error (
-                                                                              Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
-                                                                              name (show(Typing.t) tc) (show(Typing.t) type_in_expanded_ctx)
-                                                                            );
-                                                                         acc
-                                                                | (_, `UseWithType (typing)) -> Context.extend_layer acc name typing
-                                                              ) (Context.CtxLayer []) decls in
-                                            let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
-                                            t_expr, Scope(decls, e_expr)
+            | Scope(decls, expr)    -> let get_expanded_layer_context_type ctx_layer name maybeType =
+                                         let exp_ctx_layer = (match maybeType with
+                                           | Some t -> Context.extend_layer ctx_layer name t
+                                           | None   -> ctx_layer
+                                         ) in
+                                         let exp_ctx = Context.expandWith exp_ctx_layer ctx in
+                                         let exp_type = Context.get_type exp_ctx name in
+                                         (exp_ctx_layer, exp_ctx, exp_type)
+                                       in
+                                       let ctx_layer = List.fold_left (
+                                                         fun acc (name, decl) ->
+                                                           match decl with
+                                                           | (_, maybeType,`Fun (args, body))
+                                                                 -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
+                                                                    let sub_ret_ht = (TypeHsh.create 128) in (* Make fresh hashtable for returns in body *)
+                                                                    let type_body, _ =  type_check_int sub_ret_ht (Context.expand exp_ctx) body; in
+                                                                    let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
+                                                                                      [type_body] (TypeHsh.to_seq_keys sub_ret_ht) in
+                                                                    let l_ret_type = union_contraction (TUnion(union_types)) in
+                                                                    let tc = TLambda (List.map (fun _ -> TAny) args, l_ret_type) in
+                                                                    if not (conforms tc exp_type)
+                                                                       then report_error (
+                                                                         Printf.sprintf "Function \"%s\" having type \"%s\" doesn't conforms declared type %s."
+                                                                         name (show(Typing.t) tc) (show(Typing.t) exp_type)
+                                                                       );
+                                                                    acc_ext
+                                                           | (_, maybeType,`Variable (maybe_def))
+                                                                 -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
+                                                                    let tc = match maybe_def with | Some def -> fst (type_check_int ret_ht exp_ctx def) | None -> TAny;
+                                                                    in if not (conforms tc exp_type)
+                                                                       then report_error (
+                                                                         Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
+                                                                         name (show(Typing.t) tc) (show(Typing.t) exp_type)
+                                                                       );
+                                                                    acc_ext
+                                                         ) (Context.CtxLayer []) decls in
+                                       let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
+                                       t_expr, Scope(decls, e_expr)
             | Lambda(args, body)    ->  (* collect return yielding types and join with this type with TUnion *)
                                         let sub_ret_ht = (TypeHsh.create 128) in
                                         let t_body, e_body = type_check_int sub_ret_ht (Context.expand ctx) body in
@@ -998,14 +1007,13 @@ module Expr =
          let vars, body, bnds =
            List.fold_left
              (fun (vs, bd, bnd) -> function
-              | (name, (_, `Variable value)) -> (name, Mut) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
-              | (name, (_, `Fun (args, b)))  -> (name, FVal) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
-              | (name, (_, `UseWithType _)) -> vs, bd, bnd
+              | (name, (_, _, `Variable value)) -> (name, Mut) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
+              | (name, (_, _, `Fun (args, b)))  -> (name, FVal) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
              )
              ([], body, [])
              (List.rev @@
               List.map (function
-                        | (name, (`Extern, _)) -> report_error (Printf.sprintf "external names (\"%s\") not supported in evaluation" (Subst.subst name))
+                        | (name, (`Extern, _, _)) -> report_error (Printf.sprintf "external names (\"%s\") not supported in evaluation" (Subst.subst name))
                         | x -> x
                        )
               defs)
@@ -1332,8 +1340,8 @@ module Expr =
                let defs, s =
                  List.fold_right (fun (name, def) (defs, s) ->
                      match def with
-                     | (`Local, `Variable (Some expr)) ->
-                        (name, (`Local, `Variable None)) :: defs, Seq (Ignore (Assign (Ref name, expr)), s)
+                     | (`Local, maybeType, `Variable (Some expr)) ->
+                        (name, (`Local, maybeType, `Variable None)) :: defs, Seq (Ignore (Assign (Ref name, expr)), s)
                      | def -> (name, def) :: defs, s)
                    defs
                    ([], s)
@@ -1569,7 +1577,7 @@ module Definition =
   struct
 
     (* The type for a definition: either a function/infix, or a local variable *)
-    type t = string * [`Fun of string list * Expr.t | `Variable of Expr.t option | `UseWithType of Typing.t]
+    type t = string * Typing.t option * [`Fun of string list * Expr.t | `Variable of Expr.t option ]
 
     let unopt_mod = function None -> `Local | Some m -> m
 
@@ -1577,7 +1585,7 @@ module Definition =
       (* Workaround until Ostap starts to memoize properly *)
       const_var: l:$ name:LIDENT "=" value:!(Expr.constexpr) {
         Loc.attach name l#coord;
-        name, (`Public, `Variable (Some value))
+        name, (`Public, None, `Variable (Some value))
        };
       constdef: %"public" d:!(Util.list (const_var)) ";" {d}
       (* end of the workaround *)
@@ -1604,25 +1612,20 @@ module Definition =
           | `Ok infix' -> unopt_mod m, op, name, infix', true
           | `Fail msg  -> report_error ~loc:(Some l#coord) msg
       };
-      local_var[m][infix]: l:$ name:LIDENT typ:(-"::" $ !(Typing.typeParser))? value:(-"=" exprBasic[infix][Expr.Val])? {
+      local_var[m][infix]: l:$ name:LIDENT typ:(-"::" t:!(Typing.typeParser) {t})? value:(-"=" exprBasic[infix][Expr.Val])? {
         Loc.attach name l#coord;
-        let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
-        (* TODO add typeNode info as separate `UseWithType declaration *)
-        (* debug output *)
-        let location = match typ with | Some (ttl, _) -> ttl | None -> l in
-        Logger.add_info ~loc:(Some location#coord) (Printf.sprintf "Found type \"%s\" in local variable \"%s\"" (show(Typing.t) typeNode) name);
         match m, value with
           | `Extern, Some _ -> report_error ~loc:(Some l#coord) (Printf.sprintf "initial value for an external variable \"%s\" can not be specified" name)
-          | _               -> name, (m,`Variable value)
+          | _               -> name, (m, typ, `Variable value)
       };
 
       parse[infix]:
         m:(%"local" {`Local} | %"public" e:(%"external")? {match e with None -> `Public | Some _ -> `PublicExtern} | %"external" {`Extern})
           locs:!(Util.list (local_var m infix)) next:";" {locs, infix}
      (* Use "useTypeParser" to parse type assignments *)
-    |  name: LIDENT -"::" typ: !(Typing.typeParser) -";" {[(name, (`Local, `UseWithType (typ)))], infix}
+    |  name: LIDENT -"::" typ: !(Typing.typeParser) -";" {[(name, (`Local, Some typ, `Variable None))], infix}
     | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[Pattern.parse] -")"
-           -typ:(-"::" $ !(Typing.typeParser))?
+           -typ:(-"::" $ t:!(Typing.typeParser) {t})?
           (l:$ "{" body:exprScope[infix'][Expr.Weak] "}" {
             if flag && List.length args != 2 then report_error ~loc:(Some l#coord) "infix operator should accept two arguments";
             (match m with
@@ -1641,11 +1644,13 @@ module Definition =
                 args
                 ([], body)
             in
-            [(name, (m, `Fun (args, body)))], infix'
+            (* TODO -- infer type, not define it... *)
+            [(name, (m, typ, `Fun (args, body)))], infix'
          } |
          l:$ ";" {
+            (* What is IT? *)
             match m with
-            | `Extern -> [(name, (m, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix'
+            | `Extern -> [(name, (m, None, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix'
             | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)
          })
     ) in parse
@@ -1664,11 +1669,10 @@ module Interface =
        | Expr.Scope (decls, _) ->
           List.iter
             (function
-             | (name, (`Public, item)) | (name, (`PublicExtern, item))  ->
+             | (name, (`Public, _, item)) | (name, (`PublicExtern, _, item))  ->
                 (match item with
                  | `Fun _      -> append "F,"; append name; append ";\n"
                  | `Variable _ -> append "V,"; append name; append ";\n"
-                 | `UseWithType _ -> ()
                 )
              | _ -> ()
             )

@@ -776,10 +776,9 @@ let compile cmd ((imports, infixes), p) =
        List.fold_left
          (fun (env, e, funs) ->
            function
-           | name, (m, `Fun (args, b))     -> env#add_fun_name name m, e, (name, args, m, b) :: funs
-           | name, (m, `Variable None)     -> env#add_name name m Mut, e, funs
-           | name, (m, `Variable (Some v)) -> env#add_name name m Mut, Expr.Seq (Expr.Ignore (Expr.Assign (Expr.Ref name, v)), e), funs
-           | name, (m, `UseWithType _)     -> env, e, funs
+           | name, (m, _, `Fun (args, b))     -> env#add_fun_name name m, e, (name, args, m, b) :: funs
+           | name, (m, _, `Variable None)     -> env#add_name name m Mut, e, funs
+           | name, (m, _, `Variable (Some v)) -> env#add_name name m Mut, Expr.Seq (Expr.Ignore (Expr.Assign (Expr.Ref name, v)), e), funs
          )
          (env, e, [])
          (List.rev ds)
