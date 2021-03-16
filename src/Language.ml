@@ -1047,7 +1047,7 @@ module Expr =
              let posAsStr = if positive then "+" else "-" in
              report_error ~loc:None (Printf.sprintf "Cast%s failed: \"%s\"\n" posAsStr label)
            )
-           else eval (st, i, o, vs) newExpr k
+           else eval (st, i, o, vs) k newExpr
       | Ref x ->
          eval (st, i, o, (Value.Var (Value.Global x)) :: vs) Skip k (* only Value.Global is supported in interpretation *)
       | Array xs ->

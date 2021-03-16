@@ -25,7 +25,7 @@ uninstall:
 regression:
 	make clean check -C regression
 	make clean check -C stdlib/regression
-	make clean regression -C TypedLama
+	make clean regression -C TypedLama/regression
 
 clean:
 	make clean -C src
