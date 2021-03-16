@@ -215,7 +215,7 @@ let main =
        (match cmd#get_mode with
         | `Default | `Compile ->
             ignore @@ X86.build cmd prog;
-            checkLoggerIfError();
+            checkLoggerIfError ();
         | _ -> 
   	   let rec read acc =
 	     try
@@ -230,10 +230,11 @@ let main =
 	     then Language.eval prog input
 	     else SM.run (SM.compile cmd prog) input
 	   in
-       checkLoggerIfError();
+       checkLoggerIfError ();
 	   List.iter (fun i -> Printf.printf "%d\n" i) output 
        );
-       outputWarnings() (* At last, output warnings if any *)
+       outputWarnings (); (* At last, output warnings if any *)
+       outputInfos () (* Print out infos too *)
     | `Fail er -> Printf.eprintf "Fatal error: %s\n" er; exit 255
   with
   | Language.Semantic_error msg -> Printf.printf "Error: %s\n" msg; exit 255 

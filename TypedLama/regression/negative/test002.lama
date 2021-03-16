@@ -1,0 +1,8 @@
+-- check definitions of local scope types
+{
+ local i :: Int, s :: Int ~> Int = 0; -- does not compile, 0 is not Int ~> Int
+ for i := 0, i < 100, i := i + 1 do
+   s := s + i
+ od;
+ s
+}

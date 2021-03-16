@@ -2,7 +2,7 @@ TESTS=$(sort $(basename $(wildcard test*.lama)))
 
 RUNTIME_PATH=../../../runtime
 STDLIB_PATH=../../../stdlib
-LAMAC=../../../src/lamac -tc -dp -I $(STDLIB_PATH)
+LAMAC=../../../src/lamac -tc -I $(STDLIB_PATH)
 
 .PHONY: check $(TESTS)
 

@@ -1,0 +1,15 @@
+-- check definitions of local scope types
+local acc = 0;
+
+acc := read ();
+acc := {
+ -- local acc :: Int;
+ local i :: Int, s :: Int ~> Int = fun (x) {x + 1};
+ for i := 0, i < 100, i := i + 1 do
+   write(acc);
+   acc := s(acc)
+ od;
+ acc
+};
+
+write(acc)

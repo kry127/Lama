@@ -752,7 +752,7 @@ module Expr =
                                        then
                                          (* Already checked conformity, so we can safely match with 'Some' value *)
                                          let cst_e1 = Cast (e1, TConst, "invalid left operand of operand" ^ op, true) in
-                                         let cst_e2 = Cast (e1, TConst, "invalid right operand of operand" ^ op, true) in
+                                         let cst_e2 = Cast (e2, TConst, "invalid right operand of operand" ^ op, true) in
                                          TConst, Binop(op, cst_e1, cst_e2)
                                        (* TODO not enough info + NO LOCATION in 'report_error' *)
                                        else report_error("Binary operations can be applied only to integers")
@@ -995,6 +995,7 @@ module Expr =
     | n -> fun h::tl -> let tl', rest = take (n-1) tl in h :: tl', rest
 
     let rec eval ((st, i, o, vs) as conf) k expr =
+      (* Logger.add_info (Printf.sprintf "Evaluating expression \"%s\"" (show(t) expr)); *)
       let print_values vs =
         Printf.eprintf "Values:\n%!";
         List.iter (fun v -> Printf.eprintf "%s\n%!" @@ show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") v) vs;
@@ -1047,7 +1048,8 @@ module Expr =
              let posAsStr = if positive then "+" else "-" in
              report_error ~loc:None (Printf.sprintf "Cast%s failed: \"%s\"\n" posAsStr label)
            )
-           else eval (st, i, o, vs) k newExpr
+           (* TODO you should check the calculated value, not the type itself :) *)
+           else eval conf k (schedule_list [newExpr; Intrinsic (fun (st, i, o, s::vs) -> (st, i, o, s::vs)) ])
       | Ref x ->
          eval (st, i, o, (Value.Var (Value.Global x)) :: vs) Skip k (* only Value.Global is supported in interpretation *)
       | Array xs ->
