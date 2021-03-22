@@ -673,6 +673,32 @@ module Expr =
 
             | (l, r) -> l = r (* TString, TConst, TVoid *)
 
+          (* check that value 'value' can be used as type 't': "value conforms typ" *)
+          let rec value_conforms value typ
+            = match (value, typ) with
+            | (_   , TAny) -> true
+            | (Value.Empty , TVoid) -> true
+            | (Value.Var _, _) -> false (* ??? *)
+            | (Value.Elem(container, i), l) -> (
+              match container with
+              | Value.Sexp(_, args)
+              | Value.Array(args) -> value_conforms (args.(i)) l
+              | Value.String _    -> l == TConst
+              | _                 -> false
+            )
+            | (Value.Int _, TConst) -> true
+            | (Value.String _, TString) -> true
+            | (Value.Array arr, TArr(tarrElem)) -> Array.for_all (fun arrElem -> value_conforms arrElem tarrElem) arr
+            | (Value.Sexp (name, vals), TSexp(tname, tvals)) ->
+                name == tname && List.for_all2 value_conforms (Array.to_list vals) tvals
+            (* For functions we can only check arity for raw value, but nothing more *)
+            | (Value.Closure (args, _, _), TLambda(targs, _))
+            | (Value.FunRef (_, args, _, _) , TLambda(targs, _)) ->
+                List.length args == List.length targs
+            | (Value.Builtin builtin, t) -> report_error "cannot infer builtin right now" (* TODO *)
+            (* TODO union *)
+            | _, _ -> false
+
 
           (* Union contraction function *)
           (* See also: MyPy: https://github.com/python/mypy/blob/master/mypy/join.py *)
@@ -761,7 +787,7 @@ module Expr =
                                          let cst_e1 = Cast (e1, TConst, "invalid left operand of operand" ^ op, true) in
                                          let cst_e2 = Cast (e2, TConst, "invalid right operand of operand" ^ op, true) in
                                          TConst, Binop(op, cst_e1, cst_e2)
-            | ElemRef (arr, index) (* Both normal and inplace versions, but I don't know result type of ElemRef... *)
+            | ElemRef (arr, index) (* Both value and reference versions are typed the same way... *)
             | Elem (arr, index)     -> let t_arr, e_arr     = type_check_int ret_ht ctx arr   in
                                        let t_index, e_index = type_check_int ret_ht ctx index in
                                        if conforms t_index TConst
@@ -1072,13 +1098,17 @@ module Expr =
          eval (st, i, o, v :: vs) Skip k
       | Cast (e, t, label, positive) ->
            let inferedType, newExpr = Typecheck.typecheck e in
+           let posAsStr = if positive then "+" else "-" in
            if not (Typecheck.Conformity.conforms inferedType t)
            then (
-             let posAsStr = if positive then "+" else "-" in
-             report_error ~loc:None (Printf.sprintf "Cast%s failed: \"%s\"\n" posAsStr label)
+             report_error ~loc:None (Printf.sprintf "Static cast%s failed at runtime: \"%s\"" posAsStr label)
            )
            (* TODO you should check the calculated value, not the type itself :) *)
-           else eval conf k (schedule_list [newExpr; Intrinsic (fun (st, i, o, s::vs) -> (st, i, o, s::vs)) ])
+           else eval conf k (schedule_list [newExpr; Intrinsic (fun (st, i, o, s::vs) ->
+               if not (Typecheck.Conformity.value_conforms s t)
+               then report_error ~loc:None (Printf.sprintf "Cast%s failed: \"%s\"" posAsStr label)
+               else (st, i, o, s::vs) (* act like nothing happened *)
+           )])
       | Ref x ->
          eval (st, i, o, (Value.Var (Value.Global x)) :: vs) Skip k (* only Value.Global is supported in interpretation *)
       | Array xs ->
