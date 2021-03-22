@@ -1,0 +1,4 @@
+-- failing cast test
+local x :: Int;
+local y :: ? = "some stringy boi";
+x := y

@@ -9,8 +9,8 @@ LAMAC=../../../src/lamac -tc -dp -I $(STDLIB_PATH)
 check: $(TESTS)
 
 $(TESTS): %: %.lama
-	@echo "Type negative test: $@"
-	! LAMA=$(RUNTIME_PATH) $(LAMAC) $<
+	@echo "Runtime error test: $@"
+	cat input/$@.input | LAMA=$(RUNTIME_PATH) $(LAMAC) -i $< > actual/$@.log
 
 clean:
 	$(RM) actual/test*.log test*.s test*.sm test*.html *~ $(TESTS) *.i
