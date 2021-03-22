@@ -806,7 +806,7 @@ module Expr =
                                               let call_func = Call(e_f, cast_args) in
                                               (* Step 3. cast result of the function to the resulting type *)
                                               let casted_call_func = Cast(call_func, conclusion, "function returned value with unexpected type", true) in
-                                                conclusion, casted_call_func
+                                              conclusion, casted_call_func
                                            else report_error("Argument type mismatch in function call") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
                                          | TUnion (ffs) -> union_contraction (TUnion (
                                                              List.filter_map (* Combine filtering and mapping at the same time *)
@@ -815,7 +815,10 @@ module Expr =
                                                              ffs
                                                            )), Call(e_f, e_args)
                                          | _ -> report_error("Cannot perform a call for non-callable object")
-                                       in ret_func t_f
+                                       in
+                                       let resType, resExpr = ret_func t_f in
+                                       resType, resExpr
+
             | Assign(reff, exp)     -> let t_reff, e_reff = type_check_int ret_ht ctx reff in
                                             let t_exp, e_exp  = type_check_int ret_ht ctx exp  in
                                             let ret =
@@ -905,38 +908,56 @@ module Expr =
                                          let exp_type = Context.get_type exp_ctx name in
                                          (exp_ctx_layer, exp_ctx, exp_type)
                                        in
-                                       let ctx_layer = List.fold_left (
-                                                         fun acc (name, decl) ->
-                                                           match decl with
-                                                           | (_, maybeType,`Fun (args, body))
-                                                                 -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
-                                                                    let sub_ret_ht = (TypeHsh.create 128) in (* Make fresh hashtable for returns in body *)
-                                                                    let type_body, _ =  type_check_int sub_ret_ht (Context.expand exp_ctx) body; in
-                                                                    let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
-                                                                                      [type_body] (TypeHsh.to_seq_keys sub_ret_ht) in
-                                                                    let l_ret_type = union_contraction (TUnion(union_types)) in
-                                                                    let tc = TLambda (List.map (fun _ -> TAny) args, l_ret_type) in
-                                                                    if not (conforms tc exp_type)
-                                                                       then report_error (
-                                                                         Printf.sprintf "Function \"%s\" having type \"%s\" doesn't conforms declared type %s."
-                                                                         name (show(Typing.t) tc) (show(Typing.t) exp_type)
-                                                                       );
-                                                                    acc_ext
-                                                           | (_, maybeType,`Variable (maybe_def))
-                                                                 -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
-                                                                    let tc = match maybe_def with | Some def -> fst (type_check_int ret_ht exp_ctx def) | None -> TAny;
-                                                                    in if not (conforms tc exp_type)
+                                       let ctx_layer, e_decls = List.fold_left (
+                                           fun (acc, e_decls) (name, decl) ->
+                                             match decl with
+                                             | (l, maybeType,`Fun (args, body))
+                                                   -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
+                                                      let sub_ret_ht = (TypeHsh.create 128) in (* Make fresh hashtable for returns in body *)
+                                                      let type_body, e_body =  type_check_int sub_ret_ht (Context.expand exp_ctx) body; in
+                                                      let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
+                                                                        [type_body] (TypeHsh.to_seq_keys sub_ret_ht) in
+                                                      let l_ret_type = union_contraction (TUnion(union_types)) in
+                                                       (* TODO think about inferring type for arguments! *)
+                                                      let inferred_type = TLambda (List.map (fun _ -> TAny) args, l_ret_type) in
+                                                      if not (conforms inferred_type exp_type)
+                                                      then report_error (
+                                                        Printf.sprintf "Function \"%s\" having type \"%s\" doesn't conforms declared type %s."
+                                                        name (show(Typing.t) inferred_type) (show(Typing.t) exp_type)
+                                                      )
+                                                      else
+                                                      acc_ext, (match maybeType with
+                                                       | Some t -> (name, (l, Some t,`Fun (args, e_body))) :: e_decls
+                                                       (* if maybeType is none, we can infer type! *)
+                                                       | None   -> (name, (l, Some inferred_type,`Fun (args, e_body))) :: e_decls
+                                                      )
+                                             | (l, maybeType,`Variable (maybe_def))
+                                                   -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
+                                                      (match maybe_def with
+                                                      | None     -> (* This is the case of type declaration of the variable *)
+                                                                    (* TODO check it is actually exists *)
+                                                                    acc_ext, (name, decl) :: e_decls
+                                                      | Some def ->
+                                                                    let t_def, e_def = type_check_int ret_ht exp_ctx def in
+                                                                    if not (conforms t_def exp_type)
                                                                        then report_error (
                                                                          Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
-                                                                         name (show(Typing.t) tc) (show(Typing.t) exp_type)
+                                                                         name (show(Typing.t) t_def) (show(Typing.t) exp_type)
                                                                        );
-                                                                    acc_ext
-                                                         ) (Context.CtxLayer []) decls in
+                                                                    (* Do not forget to update declaration *)
+                                                                    acc_ext, (match maybeType with
+                                                                              | Some t -> (name, (l, Some t,`Variable (Some (e_def)))) :: e_decls
+                                                                              (* if maybeType is none, we can infer type! *)
+                                                                              | None   -> (name, (l, Some t_def, `Variable (Some (e_def)))) :: e_decls
+                                                                             )
+                                                      )
+                                           ) ((Context.CtxLayer []), []) decls in
                                        let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
-                                       t_expr, Scope(decls, e_expr)
+                                       t_expr, Scope(List.rev e_decls, e_expr)
             | Lambda(args, body)    ->  (* collect return yielding types and join with this type with TUnion *)
                                         let sub_ret_ht = (TypeHsh.create 128) in
                                         (* Assume that argument types are of type TAny *)
+                                        (* TODO should we exploit type annotation of the function? *)
                                         let exp_context = List.fold_right (fun name ctx -> Context.extend ctx name TAny)
                                                                                args (Context.expand ctx) in
                                         let t_body, e_body = type_check_int sub_ret_ht exp_context body in

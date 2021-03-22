@@ -1,0 +1,5 @@
+-- check that function does not conform Double -> Double formula
+local double = fun (x) :: Double -> Double {
+  local x :: Double; -- TODO should work without that line
+  2*x
+};

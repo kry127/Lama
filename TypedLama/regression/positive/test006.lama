@@ -1,0 +1,8 @@
+local inc :: Int -> Int = fun (x) {
+  -- x :: Int; -- type declaration
+  x + 1
+};
+
+local x = read();
+local res = inc (x);
+write (res)
