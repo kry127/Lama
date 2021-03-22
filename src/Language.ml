@@ -148,14 +148,12 @@ struct
  (* Arrow type (function call)                       *) | TLambda of t list * t
  (* Union type (maybe we should use sum type?)       *) | TUnion of t list (* TODO make as set *)
  (* Empty type (when no value returns from expr)     *) | TVoid (* == Union() *)
- (* TODO Special type marker for undefined number of args | TVariadic  *)
- (* TODO S-expression with arbitrary caption              | TSymbol  *)
  (* E.g. TSymbol (TVariadic) == Any possible S-expression :) *)
  (* Syntactic sugar: TOptional(t) = TUnion(t, TVoid) *)
  with show, html
 
    (* Note: %"keyword" for keywords (DO NOT USE IT), but "[" for regular syntax should be used in parser *)
-   (* TODO what is the difference between Util.list and Util.list0 ? *)
+   (* Question: what is the difference between Util.list and Util.list0 ? *)
    (* Answer: list0 also parses empty list :) *)
    ostap (
      (* Use "typeParser" to parse type information *)
@@ -823,7 +821,7 @@ module Expr =
                                          | TAny -> TAny, Call(e_f, e_args)
                                          | TLambda (premise, conclusion) ->
                                            if try List.for_all2 conforms t_args premise
-                                              with Invalid_argument(_) -> report_error("Arity mismatch in function call") (* TODO NO 'TVariadic' SUPPORT *)
+                                              with Invalid_argument(_) -> report_error("Arity mismatch in function call") (* TODO NO VARIADIC SUPPORT *)
                                            then (* In 'then' branch each expression from t_args conform to the premise of function *)
                                               (* Step 1. cast all arguments to the input type of the function *)
                                               let cast_args = List.map2 (fun (ex, tl) tr -> Cast(ex, tr, "invalid argument passed", true))
@@ -882,7 +880,6 @@ module Expr =
                                               in
                                               TVoid, repacked_ast (* Assumed the result type of such cycles is empty *)
                                             else report_error("Loop condition should be logical value class") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
-            (* TODO very difficult branch. But no dynamic checks needed though! *)
             | Case(match_expr, branches, loc, return_kind)
                                          -> let t_match_expr, e_match_expr = type_check_int ret_ht ctx match_expr in
                                          (* Then, we analyze each branch in imperative style. O(n^2) * O(Complexity of confomrs) *)
@@ -961,7 +958,7 @@ module Expr =
                                                    -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
                                                       (match maybe_def with
                                                       | None     -> (* This is the case of type declaration of the variable *)
-                                                                    (* TODO check it is actually exists *)
+                                                                    (* TODO check the symbol is actually exists *)
                                                                     acc_ext, (name, decl) :: e_decls
                                                       | Some def ->
                                                                     let t_def, e_def = type_check_int ret_ht exp_ctx def in
@@ -1103,7 +1100,6 @@ module Expr =
            then (
              report_error ~loc:None (Printf.sprintf "Static cast%s failed at runtime: \"%s\"" posAsStr label)
            )
-           (* TODO you should check the calculated value, not the type itself :) *)
            else eval conf k (schedule_list [newExpr; Intrinsic (fun (st, i, o, s::vs) ->
                if not (Typecheck.Conformity.value_conforms s t)
                then report_error ~loc:None (Printf.sprintf "Cast%s failed: \"%s\"" posAsStr label)
@@ -1360,7 +1356,7 @@ module Expr =
               ([], body)
           in
           let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
-          (* TODO insert typeNode in type definition block *)
+          (* TODO insert typeNode in type definition block, or get rid of it... *)
           ignore atr (Lambda (args, body))
       }
 
@@ -1705,7 +1701,7 @@ module Definition =
                 args
                 ([], body)
             in
-            (* TODO -- infer type, not define it... *)
+            (* if 'typ' is None, well then, it will be inferred from the body *)
             [(name, (m, typ, `Fun (args, body)))], infix'
          } |
          l:$ ";" {
