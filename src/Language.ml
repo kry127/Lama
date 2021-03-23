@@ -483,33 +483,33 @@ module Expr =
        notation, it came from GT.
     *)
     @type t =
-    (* integer constant           *) | Const     of int
-    (* array                      *) | Array     of t list
-    (* string                     *) | String    of string
-    (* S-expressions              *) | Sexp      of string * t list
-    (* variable                   *) | Var       of string
-    (* cast                       *) | Cast      of t * Typing.t * string * bool
-    (* reference (aka "lvalue")   *) | Ref       of string
-    (* binary operator            *) | Binop     of string * t * t
-    (* element extraction         *) | Elem      of t * t
-    (* reference to an element    *) | ElemRef   of t * t
-    (* length                     *) | Length    of t
-    (* string conversion          *) | StringVal of t
-    (* function call              *) | Call      of t * t list
-    (* assignment                 *) | Assign    of t * t
-    (* composition                *) | Seq       of t * t
-    (* empty statement            *) | Skip
-    (* conditional                *) | If        of t * t * t
-    (* loop with a pre-condition  *) | While     of t * t
-    (* loop with a post-condition *) | Repeat    of t * t
-    (* pattern-matching           *) | Case      of t * (Pattern.t * t) list * Loc.t * atr
-    (* return statement           *) | Return    of t option
-    (* ignore a value             *) | Ignore    of t
-    (* entering the scope         *) | Scope     of (string * decl) list * t
-    (* lambda expression          *) | Lambda    of string list * t
-    (* leave a scope              *) | Leave
-    (* intrinsic (for evaluation) *) | Intrinsic of (t config, t config) arrow
-    (* control (for control flow) *) | Control   of (t config, t * t config) arrow
+    (* integer constant           *) | Const     of Loc.t * int
+    (* array                      *) | Array     of Loc.t * t list
+    (* string                     *) | String    of Loc.t * string
+    (* S-expressions              *) | Sexp      of Loc.t * string * t list
+    (* variable                   *) | Var       of Loc.t * string
+    (* cast                       *) | Cast      of Loc.t * t * Typing.t * string * bool
+    (* reference (aka "lvalue")   *) | Ref       of Loc.t * string
+    (* binary operator            *) | Binop     of Loc.t * string * t * t
+    (* element extraction         *) | Elem      of Loc.t * t * t
+    (* reference to an element    *) | ElemRef   of Loc.t * t * t
+    (* length                     *) | Length    of Loc.t * t
+    (* string conversion          *) | StringVal of Loc.t * t
+    (* function call              *) | Call      of Loc.t * t * t list
+    (* assignment                 *) | Assign    of Loc.t * t * t
+    (* composition                *) | Seq       of Loc.t * t * t
+    (* empty statement            *) | Skip      of Loc.t
+    (* conditional                *) | If        of Loc.t * t * t * t
+    (* loop with a pre-condition  *) | While     of Loc.t * t * t
+    (* loop with a post-condition *) | Repeat    of Loc.t * t * t
+    (* pattern-matching           *) | Case      of Loc.t * t * (Pattern.t * t) list * atr
+    (* return statement           *) | Return    of Loc.t * t option
+    (* ignore a value             *) | Ignore    of Loc.t * t
+    (* entering the scope         *) | Scope     of Loc.t * (string * decl) list * t
+    (* lambda expression          *) | Lambda    of Loc.t * string list * t
+    (* leave a scope              *) | Leave     of Loc.t
+    (* intrinsic (for evaluation) *) | Intrinsic of Loc.t * (t config, t config) arrow
+    (* control (for control flow) *) | Control   of Loc.t * (t config, t * t config) arrow
     (* BTW, great example of decoupling of modules Expr and Definition! decl defined with universal lables *)
     and decl = [`Local | `Public | `Extern | `PublicExtern ]
                  * Typing.t option
@@ -518,6 +518,14 @@ module Expr =
 
     let notRef = function Reff -> false | _ -> true
     let isVoid = function Void | Weak -> true  | _ -> false
+
+    (* Extracts location from expression *)
+    let exprLoc = function Const (l, _) | Array(l, _) | String(l, _) | Sexp(l,_, _) | Var(l, _) | Cast(l, _, _, _, _)
+                           | Ref(l, _) | Binop(l, _, _, _) | Elem(l, _, _) | ElemRef(l, _, _) | Length(l, _)
+                           | StringVal(l, _) | Call(l, _, _) | Assign(l, _, _) | Seq(l, _, _) | Skip(l)
+                           | If(l, _, _, _) | While(l, _, _) | Repeat(l, _, _) | Case(l, _, _, _) | Return(l, _)
+                           | Ignore(l, _) | Scope(l, _, _) | Lambda(l, _, _) | Leave(l)
+                           | Intrinsic(l, _) | Control(l, _) -> l
 
     (* Available binary operators:
         !!                   --- disjunction
@@ -596,7 +604,7 @@ module Expr =
       module Conformity =
         struct
           let tmp_name = "tmp" (* name for variable that stores everything *)
-          let loc = (0, 0) (* TODO need to know real location, not fake one *)
+          let loc = (0, 0) (* TODO need to know real location, not fake one, SEE OTHER (0, 0) STUFF! *)
 
           (* check that type 'lhs' is materialization of type 'rhs' *)
           let rec materialize lhs rhs
@@ -762,39 +770,38 @@ module Expr =
 
       let type_check ctx expr =
         let rec type_check_int ret_ht ctx expr
-          = (* Printf.printf "Type checking \"%s\"...\n" (show(t) expr); *)
+          =
             match expr with
-            | Cast(_, t, _, _)      -> t, expr (* Trivial rule, but does it preserve soundness? *)
-            | Const _               -> TConst, expr
-            | Array values          -> let types, exprs = List.split( List.map (fun exp -> type_check_int ret_ht ctx exp) values) in
-                                            TArr (union_contraction (TUnion types)), Array exprs
-            | String _              -> TString, expr
-            | Sexp (name, subexprs) -> let types, exprs = List.split ( List.map (fun exp -> type_check_int ret_ht ctx exp) subexprs) in
-                                            TSexp(name, types), Sexp(name, exprs)
-            | Var   name            -> Context.get_type ctx name, expr
-            | Ref   name            -> TRef (Context.get_type ctx name), expr
-            | Binop (op, exp1, exp2)-> let t1, e1 = type_check_int ret_ht ctx exp1 in
+            | Cast(_, _, t, _, _)      -> t, expr (* Trivial rule, but does it preserve soundness? *)
+            | Const _                  -> TConst, expr
+            | Array (l, values)        -> let types, exprs = List.split( List.map (fun exp -> type_check_int ret_ht ctx exp) values) in
+                                          TArr (union_contraction (TUnion types)), Array (l, exprs)
+            | String _                 -> TString, expr
+            | Sexp (l, name, subexprs) -> let types, exprs = List.split ( List.map (fun exp -> type_check_int ret_ht ctx exp) subexprs) in
+                                          TSexp(name, types), Sexp(l, name, exprs)
+            | Var   (_, name)            -> Context.get_type ctx name, expr
+            | Ref   (_, name)            -> TRef (Context.get_type ctx name), expr
+            | Binop (l, op, exp1, exp2)-> let t1, e1 = type_check_int ret_ht ctx exp1 in
                                        let t2, e2 = type_check_int ret_ht ctx exp2 in
-                                       (* TODO not enough info + NO LOCATION in 'report_error' *)
                                        if not (conforms t1 TConst)
-                                       then report_error(Printf.sprintf "left binary operand of type \"%s\" does not conforms to TConst" (show(t) t1))
+                                       then report_error ~loc:(Some l) @@ Printf.sprintf "left binary operand of type \"%s\" does not conforms to TConst" (show(t) t1)
                                        else if not (conforms t2 TConst)
-                                       then report_error(Printf.sprintf "right binary operand of type \"%s\" does not conforms to TConst" (show(t) t2))
+                                       then report_error ~loc:(Some l) @@ Printf.sprintf "right binary operand of type \"%s\" does not conforms to TConst" (show(t) t2)
                                        else
                                          (* Already checked conformity, so we can safely match with 'Some' value *)
-                                         let cst_e1 = Cast (e1, TConst, "invalid left operand of operand" ^ op, true) in
-                                         let cst_e2 = Cast (e2, TConst, "invalid right operand of operand" ^ op, true) in
-                                         TConst, Binop(op, cst_e1, cst_e2)
-            | ElemRef (arr, index) (* Both value and reference versions are typed the same way... *)
-            | Elem (arr, index)     -> let t_arr, e_arr     = type_check_int ret_ht ctx arr   in
+                                         let cst_e1 = Cast (l, e1, TConst, "invalid left operand of operand" ^ op, true) in
+                                         let cst_e2 = Cast (l, e2, TConst, "invalid right operand of operand" ^ op, true) in
+                                         TConst, Binop(l, op, cst_e1, cst_e2)
+            | ElemRef (l, arr, index) (* Both value and reference versions are typed the same way... *)
+            | Elem (l, arr, index)     -> let t_arr, e_arr     = type_check_int ret_ht ctx arr   in
                                        let t_index, e_index = type_check_int ret_ht ctx index in
                                        if conforms t_index TConst
                                        then
                                          (* Cast index to integer and repack AST *)
-                                         let e_index_cst = Cast (e_index, TConst, "index is not a number", false) in
+                                         let e_index_cst = Cast (l, e_index, TConst, "index is not a number", true) in
                                          let repacked_ast = match expr with
-                                             | ElemRef (arr, index) -> ElemRef(arr, e_index_cst)
-                                             | Elem    (arr, index) -> Elem   (arr, e_index_cst)
+                                             | ElemRef (l, arr, index) -> ElemRef(l, arr, e_index_cst)
+                                             | Elem    (l, arr, index) -> Elem   (l, arr, e_index_cst)
                                          in
                                          match t_arr with
                                               | TAny            -> TAny, repacked_ast
@@ -805,124 +812,133 @@ module Expr =
                                               (*| TSexp(name, typeList)  -> List.nth_opt typeList (Language.eval index [])
                                               | TSexp(name, type_list)  -> TUnion (type_list), repacked_ast (* Breaks type safety: UB when index out of bound *)
                                               *)
-                                              | _ -> report_error("Indexing can be performed on strings, arrays and S-expressions only") (* TODO NO LOCATION *)
-                                       else report_error("Indexing can be done only with integers") (* TODO NO LOCATION *)
-            | Length (exp)          -> let t_exp, e_exp = type_check_int ret_ht ctx exp in
-                                            let ret_type = match t_exp with
-                                                           | TString | TArr(_) | TSexp(_, _) | TAny -> TConst
-                                                           | _ -> report_error("Length has only strings, arrays and S-expressions")
-                                            in ret_type, e_exp
-            | StringVal (exp)       -> let _, e_exp = type_check_int ret_ht ctx exp in
-                                            TString, e_exp (* The most plesant rule: anything can be matched to a string *)
-            | Call(f, args)         -> let t_f, e_f = type_check_int ret_ht ctx f in
+                                              | _ -> report_error ~loc:(Some l) "Indexing can be performed on strings, arrays and S-expressions only"
+                                       else report_error ~loc:(Some l) "Indexing can be done only with integers"
+            | Length (l, exp)       -> let t_exp, e_exp = type_check_int ret_ht ctx exp in
+                                       let ret_type = match t_exp with
+                                                      | TString | TArr(_) | TSexp(_, _) | TAny -> TConst
+                                                      | _ -> report_error ~loc:(Some l) "Length has only strings, arrays and S-expressions"
+                                       in ret_type, e_exp
+            | StringVal (_, exp)    -> let _, e_exp = type_check_int ret_ht ctx exp in
+                                       TString, e_exp (* The most plesant rule: anything can be matched to a string *)
+            | Call(l, f, args)      -> let t_f, e_f = type_check_int ret_ht ctx f in
                                        let t_args, e_args = List.split (List.map (fun arg -> type_check_int ret_ht ctx arg) args) in
                                        let rec ret_func t_ff =
                                          match t_ff with
-                                         | TAny -> TAny, Call(e_f, e_args)
+                                         | TAny -> TAny, Call(l, e_f, e_args)
                                          | TLambda (premise, conclusion) ->
                                            if try List.for_all2 conforms t_args premise
-                                              with Invalid_argument(_) -> report_error("Arity mismatch in function call") (* TODO NO VARIADIC SUPPORT *)
+                                              with Invalid_argument(_) -> report_error ~loc:(Some l) ("Arity mismatch in function call") (* TODO NO VARIADIC SUPPORT *)
                                            then (* In 'then' branch each expression from t_args conform to the premise of function *)
                                               (* Step 1. cast all arguments to the input type of the function *)
-                                              let cast_args = List.map2 (fun (ex, tl) tr -> Cast(ex, tr, "invalid argument passed", true))
+                                              let cast_args = List.map2 (fun (ex, tl) tr -> Cast(l, ex, tr, "invalid argument passed", true))
                                                                         (List.combine e_args t_args) premise in
                                               (* Step 2. then perform call of the function *)
-                                              let call_func = Call(e_f, cast_args) in
+                                              let call_func = Call(l, e_f, cast_args) in
                                               (* Step 3. cast result of the function to the resulting type *)
-                                              let casted_call_func = Cast(call_func, conclusion, "function returned value with unexpected type", true) in
+                                              let casted_call_func = Cast(l, call_func, conclusion, "function returned value with unexpected type", true) in
                                               conclusion, casted_call_func
-                                           else report_error("Argument type mismatch in function call") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
+                                           else begin
+                                             (* Put all errors in the log *)
+                                             List.iter (fun (x, y) ->
+                                                          if not (conforms x y)
+                                                          then Logger.add_error ~loc:(Some l) (Printf.sprintf "\"%s\" does not conform \"%s\"." (show(t) x) (show(t) y))
+                                                       ) (List.combine t_args premise);
+                                             (* Fastfail *)
+                                             report_error ~loc:(Some l) ("Argument type mismatch in function call")
+                                           end
                                          | TUnion (ffs) -> union_contraction (TUnion (
                                                              List.filter_map (* Combine filtering and mapping at the same time *)
                                                              (* If no exception comes out, give out type as is, otherwise nothing returned *)
                                                              (fun f -> try Some (fst (ret_func f)) with _ -> None)
                                                              ffs
-                                                           )), Call(e_f, e_args)
-                                         | _ -> report_error("Cannot perform a call for non-callable object")
+                                                           )), Call(l, e_f, e_args)
+                                         | _ -> report_error ~loc:(Some l) ("Cannot perform a call for non-callable object")
                                        in
                                        let resType, resExpr = ret_func t_f in
                                        resType, resExpr
 
-            | Assign(reff, exp)     -> let t_reff, e_reff = type_check_int ret_ht ctx reff in
-                                            let t_exp, e_exp  = type_check_int ret_ht ctx exp  in
-                                            let ret =
-                                              match t_reff with
-                                              | TAny -> TAny, Assign(e_reff, e_exp)
-                                              | TRef (t_x) -> if conforms t_exp t_x
-                                                              then
-                                                                let e_exp_cst = Cast(e_exp, t_x, "assignment cast failed", true) in
-                                                                t_x, Assign(e_reff, e_exp_cst)
-                                                              else report_error("Cannot assign a value with inappropriate type")
-                                            in ret
-                                             (* Ignore whatever the 'step1' type is, but we still need to typecheck it! *)
-            | Seq(step1, step2)         -> let _, step1_ast = type_check_int ret_ht ctx step1 in
-                                                let t, step2_ast = type_check_int ret_ht ctx step2 in
-                                                t, Seq(step1_ast, step2_ast)
-            | Skip                  -> TVoid, expr                (* Skip has NO return value *)
-            | If(cond, lbr, rbr)    -> let t_cond, e_cond = type_check_int ret_ht ctx cond in
-                                            let t_lbr,  e_lbr  = type_check_int ret_ht ctx lbr  in
-                                            let t_rbr,  e_rbr  = type_check_int ret_ht ctx rbr  in
-                                            if conforms t_cond TConst
-                                            then
-                                              let e_cond_cst = Cast(e_cond, TConst, "if condition didn't evaluate to boolean", true) in
-                                              union_contraction (TUnion(t_lbr :: t_rbr :: []))
-                                              , If(e_cond_cst, e_lbr, e_rbr)
-                                            else report_error("If condition should be logical value class") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
-            | While(cond, body)
-            | Repeat(body, cond)    -> let t_cond, e_cond = type_check_int ret_ht ctx cond in
-                                            let t_body, e_body = type_check_int ret_ht ctx body in
-                                            if conforms t_cond TConst
-                                            then
-                                              let e_cond_cst = Cast(e_cond, TConst, "cycle condition didn't evaluate to boolean", true) in
-                                              let repacked_ast = match expr with
-                                              | While (cond, body) -> While (e_cond_cst, e_body)
-                                              | Repeat(body, cond) -> Repeat(e_body, e_cond_cst)
-                                              in
-                                              TVoid, repacked_ast (* Assumed the result type of such cycles is empty *)
-                                            else report_error("Loop condition should be logical value class") (* TODO NO LOCATION, NO SPECIFIC MISMATCH TYPE *)
-            | Case(match_expr, branches, loc, return_kind)
-                                         -> let t_match_expr, e_match_expr = type_check_int ret_ht ctx match_expr in
-                                         (* Then, we analyze each branch in imperative style. O(n^2) * O(Complexity of confomrs) *)
-                                            let len = List.length branches in
-                                            let pattern_types = Array.make len TAny in
-                                            let returns = Array.make len (TAny, Const 0) in
-                                            for i = 0 to len - 1 do
-                                              let (pattern, implementation) = (List.nth branches i) in
-                                              let (pattern_type, ctx_layer) = infer_pattern_type pattern in
-                                              (* Check conformity with main pattern *)
-                                              if not (conforms pattern_type t_match_expr)
-                                              then Logger.add_warning ~loc:(Some loc) "branch does not match anything (useless)"
-                                              else begin
-                                                (* Then check conformity with upper patterns *)
-                                                for j = 0 to i - 1 do
-                                                 (* see instance0012: subtyping is used when less specified type occurs below more specified: *)
-                                                  if subtype pattern_type pattern_types.(j)
-                                                  then Logger.add_warning ~loc:(Some loc) "branch is unreachable (already covered)"
-                                                  else ();
-                                                done;
-                                                (* We have useful branch here *)
-                                                pattern_types.(i) <- pattern_type;
-                                                returns.(i) <- type_check_int ret_ht (Context.expandWith ctx_layer ctx) implementation
-                                              end
-                                            done;
-                                            (* Extra check that all branches have been covered *)
-                                            let b_type = union_contraction (TUnion(Array.to_list pattern_types)) in
-                                              if not (subtype t_match_expr (b_type))
-                                              then Logger.add_warning ~loc:(Some loc) (Printf.sprintf "branches \"%s\" do not cover target type \"%s\"" (show(Typing.t) b_type) (show(Typing.t) t_match_expr));
-                                            let return_types, e_branches_impl = List.split (Array.to_list returns) in
-                                            let e_branches = List.map2 (fun (pat, _) impl -> pat, impl) branches e_branches_impl in
-                                            (* Then return accumulated return types in one TUnion type *)
-                                            union_contraction (TUnion(return_types))
-                                            , Case(e_match_expr, e_branches, loc, return_kind)
-            | Return(eopt)             -> (match eopt with
-                                               | Some ee -> let t_expr, e_expr = type_check_int ret_ht ctx ee in
-                                                            TypeHsh.add ret_ht t_expr true; (* Add result to type set*)
-                                                            TVoid, Return(Some e_expr)
-                                               | None    -> TVoid, expr)
-            | Ignore(expr)             -> let _, e_expr = type_check_int ret_ht ctx expr in
-                                               TVoid, Ignore(e_expr)
+            | Assign(l, reff, exp)  -> let t_reff, e_reff = type_check_int ret_ht ctx reff in
+                                       let t_exp,  e_exp  = type_check_int ret_ht ctx exp  in
+                                       let ret =
+                                         match t_reff with
+                                         | TAny -> TAny, Assign(l, e_reff, e_exp)
+                                         | TRef (t_x) ->
+                                             if conforms t_exp t_x
+                                             then
+                                               let e_exp_cst = Cast(l, e_exp, t_x, "assignment cast failed", true) in
+                                               t_x, Assign(l, e_reff, e_exp_cst)
+                                             else report_error ~loc:(Some l) "cannot assign a value with inappropriate type"
+                                       in ret
+                                           (* Ignore whatever the 'step1' type is, but we still need to typecheck it! *)
+            | Seq(l, step1, step2)  -> let _, step1_ast = type_check_int ret_ht ctx step1 in
+                                       let t, step2_ast = type_check_int ret_ht ctx step2 in
+                                       t, Seq(l, step1_ast, step2_ast)
+            | Skip _                -> TVoid, expr                (* Skip has NO return value *)
+            | If(l, cond, lbr, rbr) -> let t_cond, e_cond = type_check_int ret_ht ctx cond in
+                                       let t_lbr,  e_lbr  = type_check_int ret_ht ctx lbr  in
+                                       let t_rbr,  e_rbr  = type_check_int ret_ht ctx rbr  in
+                                       if conforms t_cond TConst
+                                       then
+                                         let e_cond_cst = Cast(l, e_cond, TConst, "if condition didn't evaluate to boolean", true) in
+                                         union_contraction (TUnion(t_lbr :: t_rbr :: []))
+                                         , If(l, e_cond_cst, e_lbr, e_rbr)
+                                       else report_error ~loc:(Some l) (Printf.sprintf "if condition should be \"%s\", but given type \"%s\"" (show(t) TConst) (show(t) t_cond))
+            | While(l, cond, body)
+            | Repeat(l, body, cond) -> let t_cond, e_cond = type_check_int ret_ht ctx cond in
+                                       let t_body, e_body = type_check_int ret_ht ctx body in
+                                       if conforms t_cond TConst
+                                       then
+                                         let e_cond_cst = Cast(l, e_cond, TConst, "cycle condition didn't evaluate to boolean", true) in
+                                         let repacked_ast = match expr with
+                                         | While (ll, cond, body) -> While (ll, e_cond_cst, e_body)
+                                         | Repeat(ll, body, cond) -> Repeat(ll, e_body, e_cond_cst)
+                                         in
+                                         TVoid, repacked_ast (* Assumed the result type of such cycles is empty *)
+                                       else report_error ~loc:(Some l) (Printf.sprintf "loop condition should be \"%s\", but given type \"%s\"" (show(t) TConst) (show(t) t_cond))
+            | Case(l, match_expr, branches, return_kind)
+                                   -> let t_match_expr, e_match_expr = type_check_int ret_ht ctx match_expr in
+                                   (* Then, we analyze each branch in imperative style. O(n^2) * O(Complexity of confomrs) *)
+                                      let len = List.length branches in
+                                      let pattern_types = Array.make len TAny in
+                                      let returns = Array.make len (TAny, Const (l, 0)) in
+                                      for i = 0 to len - 1 do
+                                        let (pattern, implementation) = (List.nth branches i) in
+                                        let (pattern_type, ctx_layer) = infer_pattern_type pattern in
+                                        (* Check conformity with main pattern *)
+                                        if not (conforms pattern_type t_match_expr)
+                                        then Logger.add_warning ~loc:(Some l) "branch does not match anything (useless)"
+                                        else begin
+                                          (* Then check conformity with upper patterns *)
+                                          for j = 0 to i - 1 do
+                                           (* see instance0012: subtyping is used when less specified type occurs below more specified: *)
+                                            if subtype pattern_type pattern_types.(j)
+                                            then Logger.add_warning ~loc:(Some l) "branch is unreachable (already covered)"
+                                            else ();
+                                          done;
+                                          (* We have useful branch here *)
+                                          pattern_types.(i) <- pattern_type;
+                                          returns.(i) <- type_check_int ret_ht (Context.expandWith ctx_layer ctx) implementation
+                                        end
+                                      done;
+                                      (* Extra check that all branches have been covered *)
+                                      let b_type = union_contraction (TUnion(Array.to_list pattern_types)) in
+                                        if not (subtype t_match_expr (b_type))
+                                        then Logger.add_warning ~loc:(Some l) (Printf.sprintf "branches \"%s\" do not cover target type \"%s\"" (show(Typing.t) b_type) (show(Typing.t) t_match_expr));
+                                      let return_types, e_branches_impl = List.split (Array.to_list returns) in
+                                      let e_branches = List.map2 (fun (pat, _) impl -> pat, impl) branches e_branches_impl in
+                                      (* Then return accumulated return types in one TUnion type *)
+                                      union_contraction (TUnion(return_types))
+                                      , Case(l, e_match_expr, e_branches, return_kind)
+            | Return(l, eopt) -> (match eopt with
+                                   | Some ee -> let t_expr, e_expr = type_check_int ret_ht ctx ee in
+                                                TypeHsh.add ret_ht t_expr true; (* Add result to type set*)
+                                                TVoid, Return(l, Some e_expr)
+                                   | None    -> TVoid, expr)
+            | Ignore(l, expr) -> let _, e_expr = type_check_int ret_ht ctx expr in
+                                 TVoid, Ignore(l, e_expr)
             (* decided, that Scope does not affect structure of the AST *)
-            | Scope(decls, expr)    -> let get_expanded_layer_context_type ctx_layer name maybeType =
+            | Scope(l, decls, expr) -> let get_expanded_layer_context_type ctx_layer name maybeType =
                                          let exp_ctx_layer = (match maybeType with
                                            | Some t -> Context.extend_layer ctx_layer name t
                                            | None   -> ctx_layer
@@ -934,7 +950,7 @@ module Expr =
                                        let ctx_layer, e_decls = List.fold_left (
                                            fun (acc, e_decls) (name, decl) ->
                                              match decl with
-                                             | (l, maybeType,`Fun (args, body))
+                                             | (ldef, maybeType,`Fun (args, body))
                                                    -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
                                                       let sub_ret_ht = (TypeHsh.create 128) in (* Make fresh hashtable for returns in body *)
                                                       let type_body, e_body =  type_check_int sub_ret_ht (Context.expand exp_ctx) body; in
@@ -944,17 +960,17 @@ module Expr =
                                                        (* TODO think about inferring type for arguments! *)
                                                       let inferred_type = TLambda (List.map (fun _ -> TAny) args, l_ret_type) in
                                                       if not (conforms inferred_type exp_type)
-                                                      then report_error (
+                                                      then report_error ~loc:(Some(exprLoc expr)) (
                                                         Printf.sprintf "Function \"%s\" having type \"%s\" doesn't conforms declared type %s."
                                                         name (show(Typing.t) inferred_type) (show(Typing.t) exp_type)
                                                       )
                                                       else
                                                       acc_ext, (match maybeType with
-                                                       | Some t -> (name, (l, Some t,`Fun (args, e_body))) :: e_decls
+                                                       | Some t -> (name, (ldef, Some t,`Fun (args, e_body))) :: e_decls
                                                        (* if maybeType is none, we can infer type! *)
-                                                       | None   -> (name, (l, Some inferred_type,`Fun (args, e_body))) :: e_decls
+                                                       | None   -> (name, (ldef, Some inferred_type,`Fun (args, e_body))) :: e_decls
                                                       )
-                                             | (l, maybeType,`Variable (maybe_def))
+                                             | (ldef, maybeType,`Variable (maybe_def))
                                                    -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
                                                       (match maybe_def with
                                                       | None     -> (* This is the case of type declaration of the variable *)
@@ -963,34 +979,34 @@ module Expr =
                                                       | Some def ->
                                                                     let t_def, e_def = type_check_int ret_ht exp_ctx def in
                                                                     if not (conforms t_def exp_type)
-                                                                       then report_error (
+                                                                       then report_error ~loc:(Some (exprLoc expr)) (
                                                                          Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
                                                                          name (show(Typing.t) t_def) (show(Typing.t) exp_type)
                                                                        );
                                                                     (* Do not forget to update declaration *)
                                                                     acc_ext, (match maybeType with
-                                                                              | Some t -> (name, (l, Some t,`Variable (Some (e_def)))) :: e_decls
+                                                                              | Some t -> (name, (ldef, Some t,`Variable (Some (e_def)))) :: e_decls
                                                                               (* if maybeType is none, we can infer type! *)
-                                                                              | None   -> (name, (l, Some t_def, `Variable (Some (e_def)))) :: e_decls
+                                                                              | None   -> (name, (ldef, Some t_def, `Variable (Some (e_def)))) :: e_decls
                                                                              )
                                                       )
                                            ) ((Context.CtxLayer []), []) decls in
                                        let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
-                                       t_expr, Scope(List.rev e_decls, e_expr)
-            | Lambda(args, body)    ->  (* collect return yielding types and join with this type with TUnion *)
-                                        let sub_ret_ht = (TypeHsh.create 128) in
-                                        (* Assume that argument types are of type TAny *)
-                                        (* TODO should we exploit type annotation of the function? *)
-                                        let exp_context = List.fold_right (fun name ctx -> Context.extend ctx name TAny)
-                                                                               args (Context.expand ctx) in
-                                        let t_body, e_body = type_check_int sub_ret_ht exp_context body in
-                                        let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
-                                                          [t_body] (TypeHsh.to_seq_keys sub_ret_ht) in
-                                        let l_ret_type = union_contraction (TUnion(union_types)) in
-                                        TLambda(List.map (fun _ -> TAny) args, l_ret_type), Lambda(args, e_body)
-            | Leave                 -> report_error("Cannot infer the type for internal compiler node 'Leave'")
-            | Intrinsic (_)         -> report_error("Cannot infer the type for internal compiler node 'Intrinsic'")
-            | Control   (_)         -> report_error("Cannot infer the type for internal compiler node 'Control'")
+                                       t_expr, Scope(l, List.rev e_decls, e_expr)
+            | Lambda(l, args, body) ->  (* collect return yielding types and join with this type with TUnion *)
+                                    let sub_ret_ht = (TypeHsh.create 128) in
+                                    (* Assume that argument types are of type TAny *)
+                                    (* TODO should we exploit type annotation of the function? *)
+                                    let exp_context = List.fold_right (fun name ctx -> Context.extend ctx name TAny)
+                                                                           args (Context.expand ctx) in
+                                    let t_body, e_body = type_check_int sub_ret_ht exp_context body in
+                                    let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
+                                                      [t_body] (TypeHsh.to_seq_keys sub_ret_ht) in
+                                    let l_ret_type = union_contraction (TUnion(union_types)) in
+                                    TLambda(List.map (fun _ -> TAny) args, l_ret_type), Lambda(l, args, e_body)
+            | Leave (l)             -> report_error ~loc:(Some l) ("Cannot infer the type for internal compiler node 'Leave'")
+            | Intrinsic (_)         -> report_error               ("Cannot infer the type for internal compiler node 'Intrinsic'")
+            | Control   (_)         -> report_error               ("Cannot infer the type for internal compiler node 'Control'")
         in
         type_check_int (TypeHsh.create 128) ctx expr
 
@@ -1037,7 +1053,7 @@ module Expr =
       | "!!" -> fun x y -> bti (itb x || itb y)
       | _    -> failwith (Printf.sprintf "Unknown binary operator %s" op)
 
-    let seq x = function Skip -> x | y -> Seq (x, y)
+    let seq x = function Skip _ -> x | y -> Seq (exprLoc x, x, y)
 
     let schedule_list h::tl =
       List.fold_left seq h tl
@@ -1054,13 +1070,13 @@ module Expr =
         Printf.eprintf "End Values\n%!"
       in
       match expr with
-      | Lambda (args, body) ->
-         eval (st, i, o, Value.Closure (args, body, [|st|]) :: vs) Skip k
-      | Scope (defs, body) ->
+      | Lambda (l, args, body) ->
+         eval (st, i, o, Value.Closure (args, body, [|st|]) :: vs) (Skip l) k
+      | Scope (l, defs, body) ->
          let vars, body, bnds =
            List.fold_left
              (fun (vs, bd, bnd) -> function
-              | (name, (_, _, `Variable value)) -> (name, Mut) :: vs, (match value with None -> bd | Some v -> Seq (Ignore (Assign (Ref name, v)), bd)), bnd
+              | (name, (_, _, `Variable value)) -> (name, Mut) :: vs, (match value with None -> bd | Some v -> Seq (l, Ignore (l, Assign (l, Ref(l, name), v)), bd)), bnd
               | (name, (_, _, `Fun (args, b)))  -> (name, FVal) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
              )
              ([], body, [])
@@ -1071,66 +1087,66 @@ module Expr =
                        )
               defs)
          in
-         eval (State.push st (State.from_list bnds) vars, i, o, vs) k (Seq (body, Leave))
-      | Ignore s ->
-         eval conf k (schedule_list [s; Intrinsic (fun (st, i, o, vs) -> (st, i, o, List.tl vs))])
-      | Control f ->
+         eval (State.push st (State.from_list bnds) vars, i, o, vs) k (Seq (l, body, Leave (l)))
+      | Ignore (l, s) ->
+         eval conf k (schedule_list [s; Intrinsic (l, fun (st, i, o, vs) -> (st, i, o, List.tl vs))])
+      | Control (_, f) ->
          let s, conf' = f conf in
          eval conf' k s
-      | Intrinsic f ->
-         eval (f conf) Skip k
-      | Const n ->
-         eval (st, i, o, (Value.of_int n) :: vs) Skip k
-      | String s ->
-         eval (st, i, o, (Value.of_string @@ Bytes.of_string s) :: vs) Skip k
-      | StringVal s ->
-         eval conf k (schedule_list [s; Intrinsic (fun (st, i, o, s::vs) -> (st, i, o, (Value.of_string @@ Value.string_val s)::vs))])
-      | Var x ->
+      | Intrinsic (l, f) ->
+         eval (f conf) (Skip l) k
+      | Const (l, n) ->
+         eval (st, i, o, (Value.of_int n) :: vs) (Skip l) k
+      | String (l, s) ->
+         eval (st, i, o, (Value.of_string @@ Bytes.of_string s) :: vs) (Skip l) k
+      | StringVal (l, s) ->
+         eval conf k (schedule_list [s; Intrinsic (l, fun (st, i, o, s::vs) -> (st, i, o, (Value.of_string @@ Value.string_val s)::vs))])
+      | Var (l, x) ->
          let v =
            match State.eval st x with
            | Value.FunRef (_, args, body, level) ->
               Value.Closure (args, body, [|State.prune st level|])
            | v -> v
          in
-         eval (st, i, o, v :: vs) Skip k
-      | Cast (e, t, label, positive) ->
+         eval (st, i, o, v :: vs) (Skip l) k
+      | Cast (l, e, t, label, positive) ->
            let inferedType, newExpr = Typecheck.typecheck e in
            let posAsStr = if positive then "+" else "-" in
            if not (Typecheck.Conformity.conforms inferedType t)
            then (
-             report_error ~loc:None (Printf.sprintf "Static cast%s failed at runtime: \"%s\"" posAsStr label)
+             report_error ~loc:(Some l) (Printf.sprintf "Static cast%s failed at runtime: \"%s\"" posAsStr label)
            )
-           else eval conf k (schedule_list [newExpr; Intrinsic (fun (st, i, o, s::vs) ->
+           else eval conf k (schedule_list [newExpr; Intrinsic (l, fun (st, i, o, s::vs) ->
                if not (Typecheck.Conformity.value_conforms s t)
-               then report_error ~loc:None (Printf.sprintf "Cast%s failed: \"%s\"" posAsStr label)
+               then report_error ~loc:(Some l) (Printf.sprintf "Cast%s failed: \"%s\"" posAsStr label)
                else (st, i, o, s::vs) (* act like nothing happened *)
            )])
-      | Ref x ->
-         eval (st, i, o, (Value.Var (Value.Global x)) :: vs) Skip k (* only Value.Global is supported in interpretation *)
-      | Array xs ->
-         eval conf k (schedule_list (xs @ [Intrinsic (fun (st, i, o, vs) -> let es, vs' = take (List.length xs) vs in Builtin.eval (st, i, o, vs') (List.rev es) ".array")]))
-      | Sexp (t, xs) ->
-         eval conf k (schedule_list (xs @ [Intrinsic (fun (st, i, o, vs) -> let es, vs' = take (List.length xs) vs in (st, i, o, Value.Sexp (t, Array.of_list (List.rev es)) :: vs'))]))
-      | Binop (op, x, y) ->
-         eval conf k (schedule_list [x; y; Intrinsic (fun (st, i, o, y::x::vs) -> (st, i, o, (Value.of_int @@ to_func op (Value.to_int x) (Value.to_int y)) :: vs))])
-      | Elem (b, i) ->
-         eval conf k (schedule_list [b; i; Intrinsic (fun (st, i, o, j::b::vs) -> Builtin.eval (st, i, o, vs) [b; j] ".elem")])
-      | ElemRef (b, i) ->
-         eval conf k (schedule_list [b; i; Intrinsic (fun (st, i, o, j::b::vs) -> (st, i, o, (Value.Elem (b, Value.to_int j))::vs))])
-      | Length e ->
-         eval conf k (schedule_list [e; Intrinsic (fun (st, i, o, v::vs) -> Builtin.eval (st, i, o, vs) [v] ".length")])
-      | Call (f, args) -> (
+      | Ref (l, x) ->
+         eval (st, i, o, (Value.Var (Value.Global x)) :: vs) (Skip l) k (* only Value.Global is supported in interpretation *)
+      | Array (l, xs) ->
+         eval conf k (schedule_list (xs @ [Intrinsic (l, fun (st, i, o, vs) -> let es, vs' = take (List.length xs) vs in Builtin.eval (st, i, o, vs') (List.rev es) ".array")]))
+      | Sexp (l, t, xs) ->
+         eval conf k (schedule_list (xs @ [Intrinsic (l, fun (st, i, o, vs) -> let es, vs' = take (List.length xs) vs in (st, i, o, Value.Sexp (t, Array.of_list (List.rev es)) :: vs'))]))
+      | Binop (l, op, x, y) ->
+         eval conf k (schedule_list [x; y; Intrinsic (l, fun (st, i, o, y::x::vs) -> (st, i, o, (Value.of_int @@ to_func op (Value.to_int x) (Value.to_int y)) :: vs))])
+      | Elem (l, b, i) ->
+         eval conf k (schedule_list [b; i; Intrinsic (l, fun (st, i, o, j::b::vs) -> Builtin.eval (st, i, o, vs) [b; j] ".elem")])
+      | ElemRef (l, b, i) ->
+         eval conf k (schedule_list [b; i; Intrinsic (l, fun (st, i, o, j::b::vs) -> (st, i, o, (Value.Elem (b, Value.to_int j))::vs))])
+      | Length (l, e) ->
+         eval conf k (schedule_list [e; Intrinsic (l, fun (st, i, o, v::vs) -> Builtin.eval (st, i, o, vs) [v] ".length")])
+      | Call (l, f, args) -> (
          match f with
-         | Cast(f, t, msg, polarity) -> (match t with
-           | TAny -> eval conf k (Call(f, args))
+         | Cast(l, f, t, msg, polarity) -> (match t with
+           | TAny -> eval conf k (Call(l, f, args))
            | TLambda(t_args, t_body) ->
-               let negPosition = try List.map2 (fun arg targ -> Cast(arg, targ, msg, not polarity)) args t_args
-                                 with Invalid_argument(_) -> report_error("arguments more than expected type of function call")
-               in eval conf k (Cast(Call(f, negPosition), t_body, msg, polarity))
-           | _ -> report_error("attempt to call object casted to non-function type")
+               let negPosition = try List.map2 (fun arg targ -> Cast(l, arg, targ, msg, not polarity)) args t_args
+                                 with Invalid_argument(_) -> report_error ~loc:(Some l) ("arguments more than expected type of function call")
+               in eval conf k (Cast(l, Call(l, f, negPosition), t_body, msg, polarity))
+           | _ -> report_error ~loc:(Some l) "attempt to call object casted to non-function type"
          )
          | _ ->
-             eval conf k (schedule_list (f :: args @ [Intrinsic (fun (st, i, o, vs) ->
+             eval conf k (schedule_list (f :: args @ [Intrinsic (l, fun (st, i, o, vs) ->
                   let es, vs' = take (List.length args + 1) vs in
                   let f :: es = List.rev es in
                   (match f with
@@ -1138,27 +1154,27 @@ module Expr =
                       Builtin.eval (st, i, o, vs') es name
                    | Value.Closure (args, body, closure) ->
                       let st' = State.push (State.leave st closure.(0)) (State.from_list @@ List.combine args es) (List.map (fun x -> x, Mut) args) in
-                      let st'', i', o', vs'' = eval (st', i, o, []) Skip body in
+                      let st'', i', o', vs'' = eval (st', i, o, []) (Skip l) body in
                       closure.(0) <- st'';
                       (State.leave st'' st, i', o', match vs'' with [v] -> v::vs' | _ -> Value.Empty :: vs')
-                   | _ -> report_error (Printf.sprintf "callee did not evaluate to a function: \"%s\"" (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") f))
+                   | _ -> report_error ~loc:(Some l) (Printf.sprintf "callee did not evaluate to a function: \"%s\"" (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") f))
                   ))]))
         )
-      | Leave  -> eval (State.drop st, i, o, vs) Skip k
-      | Assign (x, e)  ->
-         eval conf k (schedule_list [x; e; Intrinsic (fun (st, i, o, v::x::vs) -> (update st x v, i, o, v::vs))])
-      | Seq (s1, s2) ->
+      | Leave l  -> eval (State.drop st, i, o, vs) (Skip l) k
+      | Assign (l, x, e)  ->
+         eval conf k (schedule_list [x; e; Intrinsic (l, fun (st, i, o, v::x::vs) -> (update st x v, i, o, v::vs))])
+      | Seq (_, s1, s2) ->
          eval conf (seq s2 k) s1
-      | Skip ->
-         (match k with Skip -> conf | _ -> eval conf Skip k)
-      | If (e, s1, s2) ->
-         eval conf k (schedule_list [e; Control (fun (st, i, o, e::vs) -> (if Value.to_int e <> 0 then s1 else s2), (st, i, o, vs))])
-      | While (e, s) ->
-         eval conf k (schedule_list [e; Control (fun (st, i, o, e::vs) -> (if Value.to_int e <> 0 then seq s expr else Skip), (st, i, o, vs))])
-      | Repeat (s, e) ->
-         eval conf (seq (While (Binop ("==", e, Const 0), s)) k) s
-      | Return e -> (match e with None -> (st, i, o, []) | Some e -> eval (st, i, o, []) Skip e)
-      | Case (e, bs, _, _)->
+      | Skip l ->
+         (match k with Skip _ -> conf | _ -> eval conf (Skip l) k)
+      | If (l, e, s1, s2) ->
+         eval conf k (schedule_list [e; Control (l, fun (st, i, o, e::vs) -> (if Value.to_int e <> 0 then s1 else s2), (st, i, o, vs))])
+      | While (l, e, s) ->
+         eval conf k (schedule_list [e; Control (l, fun (st, i, o, e::vs) -> (if Value.to_int e <> 0 then seq s expr else (Skip l)), (st, i, o, vs))])
+      | Repeat (l, s, e) ->
+         eval conf (seq (While (l, Binop (l, "==", e, Const (l, 0)), s)) k) s
+      | Return (l, e) -> (match e with None -> (st, i, o, []) | Some e -> eval (st, i, o, []) (Skip l) e)
+      | Case (l, e, bs, _)->
          let rec branch ((st, i, o, v::vs) as conf) = function
          | [] -> failwith (Printf.sprintf "Pattern matching failed: no branch is selected while matching %s\n" (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") v))
          | (patt, body)::tl ->
@@ -1191,9 +1207,9 @@ module Expr =
              in
              match match_patt patt v (Some State.undefined) with
              | None     -> branch conf tl
-             | Some st' -> eval (State.push st st' (List.map (fun x -> x, Unmut) @@ Pattern.vars patt), i, o, vs) k (Seq (body, Leave))
+             | Some st' -> eval (State.push st st' (List.map (fun x -> x, Unmut) @@ Pattern.vars patt), i, o, vs) k (Seq (l, body, Leave l))
          in
-         eval conf Skip (schedule_list [e; Intrinsic (fun conf -> branch conf bs)])
+         eval conf (Skip l) (schedule_list [e; Intrinsic (l, fun conf -> branch conf bs)])
 
   (* Expression parser. You can use the following terminals:
        LIDENT  --- a non-empty identifier a-z[a-zA-Z0-9_]* as a string
@@ -1202,27 +1218,31 @@ module Expr =
   *)
 
   (* places ignore if expression should be void *)
-  let ignore atr expr = match atr with Void -> Ignore expr | _ -> expr
+  let ignore atr expr = match atr with Void -> Ignore (exprLoc expr, expr) | _ -> expr
 
   (* places dummy value if required *)
   let materialize atr expr =
+    let l = exprLoc expr in
     match atr with
-    | Weak -> Seq (expr, Const 0)
+    | Weak -> Seq (l, expr, Const(l, 0))
     | _    -> expr
 
   (* semantics for infixes created in runtime *)
-  let sem s = (fun x atr y -> ignore atr (Call (Var s, [x; y]))), (fun _ -> Val, Val)
+  let sem s =
+    let l = (0, 0) in
+    (fun x atr y -> ignore atr (Call (l, Var (l, s), [x; y]))), (fun _ -> Val, Val)
 
   let sem_init s = fun x atr y ->
+    let l = (0, 0) in
     let p x y =
       match s with
-      | ":"  -> Sexp   ("cons", [x; y])
-      | ":=" -> Assign (x, y)
-      | _    -> Binop  (s, x, y)
+      | ":"  -> Sexp   (l, "cons", [x; y])
+      | ":=" -> Assign (l, x, y)
+      | _    -> Binop  (l, s, x, y)
     in
     match x with
-      Ignore x -> Ignore (p x y)
-    | _        -> ignore atr (p x y)
+      Ignore (l, x) -> Ignore (l, p x y)
+    | _             -> ignore atr (p x y)
 
     (* ======= *)
 
@@ -1269,12 +1289,12 @@ module Expr =
     let makeParser, makeBasicParser, makeScopeParser =
       let def s   = let Some def = Obj.magic !defCell in def s in
       let ostap (
-      parse[infix][atr]: h:basic[infix][Void] -";" t:parse[infix][atr] {Seq (h, t)} | basic[infix][atr];
-      scope[infix][atr]: <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (d, expr)} | {isVoid atr} => <(d, infix')> : def[infix] => {d <> []} => {Scope (d, materialize atr Skip)};
+      parse[infix][atr]: h:basic[infix][Void] l:$ -";" t:parse[infix][atr] {Seq (l#coord, h, t)} | basic[infix][atr];
+      scope[infix][atr]: l:$ <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (l#coord, d, expr)} | {isVoid atr} => l:$ <(d, infix')> : def[infix] => {d <> []} => {Scope (l#coord, d, materialize atr (Skip l#coord))};
       basic[infix][atr]: !(expr (fun x -> x) (Array.map (fun (a, (atr, l)) -> a, (atr, List.map (fun (s, _, f) -> ostap (- $(s)), f) l)) infix) (primary infix) atr);
       primary[infix][atr]:
-          s:(s:"-"? {match s with None -> fun x -> x | _ -> fun x -> Binop ("-", Const 0, x)})
-          b:base[infix][Val] is:(  "." f:LIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? {`Post (f, args)}
+          s:(l:$ s:"-"? {match s with None -> fun x -> x | _ -> fun x -> Binop (l#coord, "-", Const (l#coord, 0), x)})
+          b:base[infix][Val] l:$ is:(  "." f:LIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? {`Post (f, args)}
                                       | "." %"length"                                           {`Len}
                                       | "." %"string"                                           {`Str}
                                       | "[" i:parse[infix][Val] "]"                             {`Elem i}
@@ -1300,32 +1320,32 @@ module Expr =
             List.fold_left
               (fun b ->
                 function
-                | `Elem i         -> Elem (b, i)
-                | `Len            -> Length b
-                | `Str            -> StringVal b
-                | `Post (f, args) -> Call (Var f, b :: match args with None -> [] | Some args -> args)
-                | `Call args      -> (match b with Sexp _ -> invalid_arg "retry!" | _ -> Call (b, args))
+                | `Elem i         -> Elem (l#coord, b, i)
+                | `Len            -> Length (l#coord, b)
+                | `Str            -> StringVal (l#coord, b)
+                | `Post (f, args) -> Call (l#coord, Var(l#coord, f), b :: match args with None -> [] | Some args -> args)
+                | `Call args      -> (match b with Sexp _ -> invalid_arg "retry!" | _ -> Call (l#coord, b, args))
               )
               b
               is
           in
           let res = match lastElem, atr with
-                    | `Elem i        , Reff -> ElemRef (b, i)
-                    | `Elem i        , _    -> Elem (b, i)
-                    | `Len           , _    -> Length b
-                    | `Str           , _    -> StringVal b
-                    | `Post (f, args), _    -> Call (Var f, b :: match args with None -> [] | Some args -> args)
-                    | `Call args     , _    -> (match b with Sexp _ -> invalid_arg "retry!"  | _ -> Call (b, args))
+                    | `Elem i        , Reff -> ElemRef (l#coord, b, i)
+                    | `Elem i        , _    -> Elem (l#coord, b, i)
+                    | `Len           , _    -> Length (l#coord, b)
+                    | `Str           , _    -> StringVal (l#coord, b)
+                    | `Post (f, args), _    -> Call (l#coord, Var(l#coord, f), b :: match args with None -> [] | Some args -> args)
+                    | `Call args     , _    -> (match b with Sexp _ -> invalid_arg "retry!"  | _ -> Call (l#coord, b, args))
           in
           ignore atr (s res)
         }
       | base[infix][atr];
       base[infix][atr]:
-        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (Const n)}
-      | l:$ s:STRING                               => {notRef atr} :: (not_a_reference l) => {ignore atr (String s)}
-      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (Const  (Char.code c))}
+        l:$ n:DECIMAL                              => {notRef atr} :: (not_a_reference l) => {ignore atr (Const (l#coord, n))}
+      | l:$ s:STRING                               => {notRef atr} :: (not_a_reference l) => {ignore atr (String (l#coord, s))}
+      | l:$ c:CHAR                                 => {notRef atr} :: (not_a_reference l) => {ignore atr (Const  (l#coord, Char.code c))}
 
-      | l:$ c:(%"true" {Const 1} | %"false" {Const 0}) => {notRef atr} :: (not_a_reference l) => {ignore atr c}
+      | l:$ c:(%"true" {Const(l#coord, 1)} | %"false" {Const (l#coord, 0)}) => {notRef atr} :: (not_a_reference l) => {ignore atr c}
 
       | l:$ %"infix" s:INFIX => {notRef atr} :: (not_a_reference l) => {
           if ((* UGLY! *) Obj.magic !predefined_op) infix s
@@ -1333,10 +1353,10 @@ module Expr =
             if s = ":="
             then  report_error ~loc:(Some l#coord) (Printf.sprintf "can not capture predefined operator \":=\"")
             else
-              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (Var name)
+              let name = sys_infix_name s in Loc.attach name l#coord; ignore atr (Var (l#coord, name))
           )
           else (
-            let name = infix_name s in Loc.attach name l#coord; ignore atr (Var name)
+            let name = infix_name s in Loc.attach name l#coord; ignore atr (Var (l#coord, name))
           )
       }
       | l:$ %"fun" "(" args:!(Util.list0)[Pattern.parse] ")"
@@ -1350,75 +1370,76 @@ module Expr =
                  | Pattern.Wildcard -> env#get_tmp :: args, body
                  | p ->
                     let arg = env#get_tmp in
-                    arg :: args, Case (Var arg, [p, body], l#coord, Weak)
+                    arg :: args, Case (l#coord, Var (l#coord, arg), [p, body], Weak)
               )
               args
               ([], body)
           in
           let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
           (* TODO insert typeNode in type definition block, or get rid of it... *)
-          ignore atr (Lambda (args, body))
+          ignore atr (Lambda (l#coord, args, body))
       }
 
-      | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (Array es)}
+      | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (Array (l#coord, es))}
       | -"{" scope[infix][atr] -"}"
       | l:$ "{" es:!(Util.list0)[parse infix Val] "}" => {notRef atr} :: (not_a_reference l) => {ignore atr (match es with
-                                                                                      | [] -> Const 0
-                                                                                      | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0))
+                                                                                      | [] -> Const (l#coord, 0)
+                                                                                      | _  -> List.fold_right (fun x acc -> Sexp (l#coord, "cons", [x; acc])) es (Const (l#coord, 0)))
                                                                          }
-      | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (Sexp (t, match args with
+      | l:$ t:UIDENT args:(-"(" !(Util.list)[parse infix Val] -")")? => {notRef atr} :: (not_a_reference l) => {ignore atr (Sexp (l#coord, t, match args with
                                                                                                               | None -> []
                                                                                                               | Some args -> args))
                                                                                         }
-      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (Var x) else Ref x}
+      | l:$ x:LIDENT {Loc.attach x l#coord; if notRef atr then ignore atr (Var (l#coord, x)) else Ref (l#coord, x)}
 
-      | {isVoid atr} => %"skip" {materialize atr Skip}
+      | {isVoid atr} => l:$ %"skip" {materialize atr (Skip l#coord)}
 
-      | %"if" e:parse[infix][Val] %"then" the:scope[infix][atr]
-        elif:(%"elif" parse[infix][Val] %"then" scope[infix][atr])*
+      | %"if" cl:$ e:parse[infix][Val] %"then" the:scope[infix][atr]
+        elif:(%"elif" $ parse[infix][Val] %"then" scope[infix][atr])*
         els:("else" s:scope[infix][atr] {Some s} | {isVoid atr} => empty {None}) %"fi"
-          {If (e, the, List.fold_right (fun (e, t) elif -> If (e, t, elif)) elif (match els with Some e -> e | _ -> materialize atr Skip))}
-      | %"while" e:parse[infix][Val] %"do" s:scope[infix][Void]
-                                            => {isVoid atr} => %"od" {materialize atr (While (e, s))}
+          {If (cl#coord, e, the, List.fold_right (fun (l, e, t) elif -> If (l#coord, e, t, elif)) elif (match els with Some e -> e | _ -> materialize atr (Skip cl#coord)))}
+      | l:$ %"while" e:parse[infix][Val] %"do" s:scope[infix][Void]
+                                            => {isVoid atr} => %"od" {materialize atr (While (l#coord, e, s))}
 
-      | %"for" i:scope[infix][Void] ","
+      | l:$ %"for" i:scope[infix][Void] ","
                c:parse[infix][Val]             ","
                s:parse[infix][Void] %"do" b:scope[infix][Void] => {isVoid atr} => %"od"
                {materialize atr
                   (match i with
-                  | Scope (defs, i) -> Scope (defs, Seq (i, While (c, Seq (b, s))))
-                  | _               -> Seq (i, While (c, Seq (b, s))))
+                  | Scope (l, defs, i) -> Scope (l, defs, Seq (exprLoc i, i, While (exprLoc c, c, Seq (exprLoc b, b, s))))
+                  | _               -> Seq (exprLoc i, i, While (exprLoc c, c, Seq (exprLoc b, b, s)))
+                  )
                }
 
       | %"repeat" s:scope[infix][Void] %"until" e:basic[infix][Val] => {isVoid atr} => {
           materialize atr @@
             match s with
-            | Scope (defs, s) ->
+            | Scope (l, defs, s) ->
                let defs, s =
                  List.fold_right (fun (name, def) (defs, s) ->
                      match def with
                      | (`Local, maybeType, `Variable (Some expr)) ->
-                        (name, (`Local, maybeType, `Variable None)) :: defs, Seq (Ignore (Assign (Ref name, expr)), s)
+                        (name, (`Local, maybeType, `Variable None)) :: defs, Seq (l, Ignore (l, Assign (l, Ref (l, name), expr)), s)
                      | def -> (name, def) :: defs, s)
                    defs
                    ([], s)
                in
-               Scope (defs, Repeat (s, e))
-            | _  -> Repeat (s, e)
+               Scope (l, defs, Repeat (l, s, e))
+            | _  -> Repeat (exprLoc s, s, e)
       }
-      | %"return" e:basic[infix][Val]? => {isVoid atr} => {Return e}
-      | %"case" l:$ e:parse[infix][Val] %"of" bs:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" scope[infix][atr])] %"esac"{Case (e, bs, l#coord, atr)}
-      | l:$ %"lazy" e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (Var "makeLazy", [Lambda ([], e)]))}
-      | l:$ %"eta"  e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda ([name], Call (e, [Var name])))}
-      | l:$ %"syntax" "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr e}
+      | %"return" l:$ e:basic[infix][Val]? => {isVoid atr} => {Return (l#coord, e)}
+      | %"case" l:$ e:parse[infix][Val] %"of" bs:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" scope[infix][atr])] %"esac"{Case (l#coord, e, bs, atr)}
+      | %"lazy" l:$ e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (l#coord, Var (l#coord, "makeLazy"), [Lambda (l#coord, [], e)]))}
+      | %"eta" l:$ e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda (l#coord, [name], Call (l#coord, e, [Var (l#coord, name)])))}
+      | %"syntax" l:$ "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr e}
       | -"(" parse[infix][atr] -")";
-      syntax[infix]: ss:!(Util.listBy)[ostap ("|")][syntaxSeq infix] {
+      syntax[infix]: ss:!(Util.listBy)[ostap ("|")][syntaxSeq infix] le:$ {
         List.fold_right (fun s -> function
-                                  | Var "" -> s
-                                  | acc    -> Call (Var "alt", [s; acc])
-                        ) ss (Var "")
+                                  | Var (_, "") -> s
+                                  | acc    -> Call (exprLoc s, Var (exprLoc s, "alt"), [s; acc])
+                        ) ss (Var (le#coord, ""))
       };
-      syntaxSeq[infix]: ss:syntaxBinding[infix]+ sema:(-"{" scope[infix][Val] -"}")? {
+      syntaxSeq[infix]: ss:syntaxBinding[infix]+ sema:(-"{" scope[infix][Val] -"}")? l:$ {
         let sema, ss =
           match sema with
           | Some s -> s, ss
@@ -1428,42 +1449,42 @@ module Expr =
                                  match omit with
                                  | None   -> (match p with
                                               | None                           -> let tmp = env#get_tmp in
-                                                                                  ((Var tmp) :: arr, (loc, omit, Some (Pattern.Named (tmp, Pattern.Wildcard)), s) :: ss)
-                                              | Some (Pattern.Named (name, _)) -> ((Var name) :: arr, elem :: ss)
+                                                                                  ((Var (loc#coord, tmp)) :: arr, (loc, omit, Some (Pattern.Named (tmp, Pattern.Wildcard)), s) :: ss)
+                                              | Some (Pattern.Named (name, _)) -> ((Var (loc#coord, name)) :: arr, elem :: ss)
                                               | Some p                         -> let tmp = env#get_tmp in
-                                                                                  ((Var tmp) :: arr, (loc, omit, Some (Pattern.Named (tmp, p)), s) :: ss)
+                                                                                  ((Var (loc#coord, tmp)) :: arr, (loc, omit, Some (Pattern.Named (tmp, p)), s) :: ss)
                                              )
                                  | Some _ -> (arr, elem :: ss)
                  ) ([], []) ss
              in
-             (match arr with [a] -> a | _ -> Array (List.rev arr)), List.rev ss
+             (match arr with [a] -> a | _ -> Array ((match (List.hd ss) with (l, _, _, _) -> l#coord), List.rev arr)), List.rev ss
         in
         List.fold_right (fun (loc, _, p, s) ->
                            let make_right =
                              match p with
-                             | None                                          -> (fun body -> Lambda ([env#get_tmp], body))
-                             | Some (Pattern.Named (name, Pattern.Wildcard)) -> (fun body -> Lambda ([name], body))
+                             | None                                          -> (fun body -> Lambda (loc#coord, [env#get_tmp], body))
+                             | Some (Pattern.Named (name, Pattern.Wildcard)) -> (fun body -> Lambda (loc#coord, [name], body))
                              | Some p                                        -> (fun body ->
                                                                                    let arg = env#get_tmp in
-                                                                                   Lambda ([arg], Case (Var arg, [p, body], loc#coord, Val))
+                                                                                   Lambda (loc#coord, [arg], Case (loc#coord, Var (loc#coord, arg), [p, body], Val))
                                                                                 )
                            in
                            function
-                           | Var "" -> Call (Var (infix_name "@"), [s; make_right sema])
-                           | acc    -> Call (Var "seq", [s; make_right acc])
-                        ) ss (Var "")
+                           | Var (l, "") -> Call (l, Var (l, infix_name "@"), [s; make_right sema])
+                           | acc    -> Call (exprLoc acc, Var (exprLoc acc, "seq"), [s; make_right acc])
+                        ) ss (Var (l#coord, ""))
       };
       syntaxBinding[infix]: l:$ omit:"-"? p:(!(Pattern.parse) -"=")? s:syntaxPostfix[infix];
-      syntaxPostfix[infix]: s:syntaxPrimary[infix] p:("*" {`Rep0} | "+" {`Rep} | "?" {`Opt})? {
+      syntaxPostfix[infix]: l:$ s:syntaxPrimary[infix] p:("*" {`Rep0} | "+" {`Rep} | "?" {`Opt})? {
         match p with
         | None       -> s
-        | Some `Opt  -> Call (Var "opt" , [s])
-        | Some `Rep  -> Call (Var "rep" , [s])
-        | Some `Rep0 -> Call (Var "rep0", [s])
+        | Some `Opt  -> Call (l#coord, Var(l#coord, "opt") , [s])
+        | Some `Rep  -> Call (l#coord, Var(l#coord, "rep") , [s])
+        | Some `Rep0 -> Call (l#coord, Var(l#coord, "rep0"), [s])
       };
       syntaxPrimary[infix]: l:$ p:LIDENT args:(-"[" !(Util.list0)[parse infix Val] -"]")* {
         Loc.attach p l#coord;
-        List.fold_left (fun acc args -> Call (acc, args)) (Var p) args
+        List.fold_left (fun acc args -> Call (l#coord, acc, args)) (Var (l#coord, p)) args
       }
       | -"(" syntax[infix] -")"
       | -"$(" parse[infix][Val] -")"
@@ -1476,15 +1497,15 @@ module Expr =
     (* Workaround until Ostap starts to memoize properly *)
     ostap (
       constexpr:
-        n:DECIMAL                                          {Const n}
-      | s:STRING                                           {String s}
-      | c:CHAR                                             {Const (Char.code c)}
-      | %"true"                                            {Const 1}
-      | %"false"                                           {Const 0}
-      | "[" es:!(Util.list0)[constexpr] "]"                {Array es}
-      | "{" es:!(Util.list0)[constexpr] "}"                {match es with [] -> Const 0 | _  -> List.fold_right (fun x acc -> Sexp ("cons", [x; acc])) es (Const 0)}
-      | t:UIDENT args:(-"(" !(Util.list)[constexpr] -")")? {Sexp (t, match args with None -> [] | Some args -> args)}
-      | l:$ x:LIDENT                                       {Loc.attach x l#coord; Var x}
+        n:DECIMAL                                          {Const ((0, 0), n)}
+      | s:STRING                                           {String ((0, 0), s)}
+      | c:CHAR                                             {Const ((0, 0), Char.code c)}
+      | %"true"                                            {Const ((0, 0), 1)}
+      | %"false"                                           {Const ((0, 0), 0)}
+      | "[" es:!(Util.list0)[constexpr] "]"                {Array ((0, 0), es)}
+      | "{" es:!(Util.list0)[constexpr] "}"                {match es with [] -> Const ((0, 0), 0) | _  -> List.fold_right (fun x acc -> Sexp ((0, 0), "cons", [x; acc])) es (Const ((0, 0), 0))}
+      | t:UIDENT args:(-"(" !(Util.list)[constexpr] -")")? {Sexp ((0, 0), t, match args with None -> [] | Some args -> args)}
+      | l:$ x:LIDENT                                       {Loc.attach x l#coord; Var ((0, 0), x)}
       | -"(" constexpr -")"
     )
     (* end of the workaround *)
@@ -1696,7 +1717,7 @@ module Definition =
                   | Pattern.Wildcard -> env#get_tmp :: args, body
                   | p ->
                      let arg = env#get_tmp in
-                     arg :: args, Expr.Case (Expr.Var arg, [p, body], l#coord, Expr.Weak)
+                     arg :: args, Expr.Case (l#coord, Expr.Var(l#coord, arg), [p, body], Expr.Weak)
                 )
                 args
                 ([], body)
@@ -1707,7 +1728,7 @@ module Definition =
          l:$ ";" {
             (* What is IT? *)
             match m with
-            | `Extern -> [(name, (m, None, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip)))], infix'
+            | `Extern -> [(name, (m, None, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip l#coord)))], infix'
             | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)
          })
     ) in parse
@@ -1723,7 +1744,7 @@ module Interface =
       let append str = Buffer.add_string buf str in
       List.iter (fun i -> append "I,"; append i; append ";\n") imps;
       (match p with
-       | Expr.Scope (decls, _) ->
+       | Expr.Scope (l, decls, _) ->
           List.iter
             (function
              | (name, (`Public, _, item)) | (name, (`PublicExtern, _, item))  ->
@@ -1799,7 +1820,7 @@ module Interface =
    Takes a program and its input stream, and returns the output stream
 *)
 let eval (_, expr) i =
-  let _, _, o, _ = Expr.eval (State.empty, i, [], []) Skip expr in
+  let _, _, o, _ = Expr.eval (State.empty, i, [], []) (Skip (0, 0)) expr in
   o
 
 (* Top-level parser *)
@@ -1834,7 +1855,7 @@ ostap (
 };
 
 (* Workaround until Ostap starts to memoize properly *)
-    constparse[cmd]: <(is, infix)> : imports[cmd] d:!(Definition.constdef) {(is, []), Expr.Scope (d, Expr.materialize Expr.Weak Expr.Skip)}
+    constparse[cmd]: <(is, infix)> : imports[cmd] d:!(Definition.constdef) {(is, []), Expr.Scope ((0, 0), d, Expr.materialize Expr.Weak (Expr.Skip (0, 0)))}
 (* end of the workaround *)
 )
 
@@ -1879,8 +1900,9 @@ let parse cmd =
       parse[cmd]:
         <(is, infix)> : imports[cmd]
         <(d, infix')> : definitions[infix]
-        expr:expr[infix'][Expr.Weak]? {
-            (env#get_imports @ is, Infix.extract_exports infix'), Expr.Scope (d, match expr with None -> Expr.materialize Expr.Weak Expr.Skip | Some e -> e)
+        le:$ expr:expr[infix'][Expr.Weak]? {
+            let scopeBody = match expr with None -> Expr.materialize Expr.Weak (Expr.Skip le#coord) | Some e -> e in
+            (env#get_imports @ is, Infix.extract_exports infix'), Expr.Scope (Expr.exprLoc scopeBody, d, scopeBody)
           }
         )
   in

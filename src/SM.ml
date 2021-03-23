@@ -763,12 +763,12 @@ let compile cmd ((imports, infixes), p) =
      let env, flag2, s2 = compile_list tail  l   env es in
      add_code (env, flag1, s1) les flag2 s2
   and compile_expr tail l env = function
-  | Expr.Lambda (args, b) ->
+  | Expr.Lambda (_, args, b) ->
      let env, lines = List.fold_left (fun (env, acc) name -> let env, ln = env#gen_line name in env, acc @ ln) (env, []) args in 
      let env, name  = env#add_lambda args b in
      env#register_call name, false, lines @ [PROTO (name, env#current_function)] 
        
-  | Expr.Scope (ds, e)  ->
+  | Expr.Scope (ll, ds, e)  ->
      let blab, env = env#get_label in
      let elab, env = env#get_label in
      let env = env#push_scope blab elab in
@@ -778,7 +778,7 @@ let compile cmd ((imports, infixes), p) =
            function
            | name, (m, _, `Fun (args, b))     -> env#add_fun_name name m, e, (name, args, m, b) :: funs
            | name, (m, _, `Variable None)     -> env#add_name name m Mut, e, funs
-           | name, (m, _, `Variable (Some v)) -> env#add_name name m Mut, Expr.Seq (Expr.Ignore (Expr.Assign (Expr.Ref name, v)), e), funs
+           | name, (m, _, `Variable (Some v)) -> env#add_name name m Mut, Expr.Seq (ll, Expr.Ignore (ll, Expr.Assign (ll, Expr.Ref (ll, name), v)), e), funs
          )
          (env, e, [])
          (List.rev ds)
@@ -787,24 +787,24 @@ let compile cmd ((imports, infixes), p) =
      let env, flag, code = compile_expr tail l env e in
      env#pop_scope, flag, [SLABEL blab] @ code @ [SLABEL elab]
                                
-  | Expr.Ignore   s         -> let ls, env = env#get_label in
+  | Expr.Ignore  (_, s)     -> let ls, env = env#get_label in
                                add_code (compile_expr tail ls env s) ls false [DROP]                             
 
-  | Expr.ElemRef (x, i)     -> compile_list tail l env [x; i]
-  | Expr.Var      x         -> let env, line = env#gen_line x in
+  | Expr.ElemRef (_, x, i)  -> compile_list tail l env [x; i]
+  | Expr.Var     (_, x)     -> let env, line = env#gen_line x in
                                let env, acc  = env#lookup x in
                                (*Printf.printf "Looking up %s -> %s\n" x (show(Value.designation) acc);*)
                                (match acc with Value.Fun name -> env#register_call name, false, line @ [PROTO (name, env#current_function)] | _ -> env, false, line @ [LD acc])
-  | Expr.Ref      x         -> let env, line = env#gen_line x in
+  | Expr.Ref      (_, x)    -> let env, line = env#gen_line x in
                                let env, acc  = env#lookup x in env, false, line @ [LDA acc]
-  | Expr.Const    n         -> env, false, [CONST n]
-  | Expr.String   s         -> env, false, [STRING s]
-  | Expr.Binop (op, x, y)   -> let lop, env = env#get_label in
+  | Expr.Const    (_, n)    -> env, false, [CONST n]
+  | Expr.String   (_, s)    -> env, false, [STRING s]
+  | Expr.Binop (_, op, x, y)-> let lop, env = env#get_label in
                                add_code (compile_list false lop env [x; y]) lop false [BINOP op]
                                
-  | Expr.Call (f, args)     -> let lcall, env = env#get_label in
+  | Expr.Call (_, f, args)  -> let lcall, env = env#get_label in
                                (match f with
-                                | Expr.Var name ->
+                                | Expr.Var (_, name) ->
                                    let env, line = env#gen_line name in
                                    let env, acc  = env#lookup name in
                                    (match acc with
@@ -819,62 +819,63 @@ let compile cmd ((imports, infixes), p) =
                                 | _ -> add_code (compile_list false lcall env (f :: args)) lcall false [CALLC (List.length args, tail)]
                                )
                                     
-  | Expr.Array  xs          -> let lar, env = env#get_label in
+  | Expr.Array (_, xs)      -> let lar, env = env#get_label in
                                add_code (compile_list false lar env xs) lar false [CALL (".array", List.length xs, tail)]
                                
-  | Expr.Sexp (t, xs)       -> let lsexp, env = env#get_label in
+  | Expr.Sexp (_, t, xs)    -> let lsexp, env = env#get_label in
                                add_code (compile_list false lsexp env xs) lsexp false [SEXP (t, List.length xs)]
                              
-  | Expr.Elem (a, i)        -> let lelem, env = env#get_label in
+  | Expr.Elem (_, a, i)     -> let lelem, env = env#get_label in
                                add_code (compile_list false lelem env [a; i]) lelem false [CALL (".elem", 2, tail)]
                                
-  | Expr.Length e           -> let llen, env = env#get_label in
+  | Expr.Length (_, e)      -> let llen, env = env#get_label in
                                add_code (compile_expr false llen env e) llen false [CALL (".length", 1, tail)]
                                
-  | Expr.StringVal e        -> let lsv, env = env#get_label in
+  | Expr.StringVal (_, e)   -> let lsv, env = env#get_label in
                                add_code (compile_expr false lsv env e) lsv false [CALL (".stringval", 1, tail)]
                                
-  | Expr.Assign (Expr.Ref x, e) ->  let lassn, env = env#get_label in
-                                    let env  , line = env#gen_line x in
-                                    let env  , acc  = env#lookup x in
-                                    add_code (compile_expr false lassn env e) lassn false (line @ [ST acc])     
+  | Expr.Assign (_, Expr.Ref (_, x), e) ->
+                               let lassn, env = env#get_label in
+                               let env  , line = env#gen_line x in
+                               let env  , acc  = env#lookup x in
+                               add_code (compile_expr false lassn env e) lassn false (line @ [ST acc])
 
-  | Expr.Assign (x, e)      -> let lassn, env = env#get_label in
+  | Expr.Assign (_, x, e)   -> let lassn, env = env#get_label in
                                add_code (compile_list false lassn env [x; e]) lassn false [match x with Expr.Ref _ -> STI | _ -> STA] (*Expr.ElemRef _ -> STA | _ -> STI]*)
                              
-  | Expr.Skip               -> env, false, []
+  | Expr.Skip  _            -> env, false, []
 
-  | Expr.Seq    (s1, s2)    -> compile_list tail l env [s1; s2]
+  | Expr.Seq    (_, s1, s2) -> compile_list tail l env [s1; s2]
 
-  | Expr.If     (c, s1, s2) -> let le, env = env#get_label in 
+  | Expr.If  (_, c, s1, s2) -> let le, env = env#get_label in
                                let l2, env = env#get_label in
                                let env, fe   , se = compile_expr false le env c in
                                let env, flag1, s1 = compile_expr tail  l  env s1 in
                                let env, flag2, s2 = compile_expr tail  l  env s2 in
                                env, true, se @ (if fe then [LABEL le] else []) @ [CJMP ("z", l2)] @ s1 @ (if flag1 then [] else [JMP l]) @ [LABEL l2] @ s2 @ (if flag2 then [] else [JMP l]) 
                                
-  | Expr.While  (c, s)      -> let lexp, env = env#get_label in                               
+  | Expr.While  (_, c, s)   -> let lexp, env = env#get_label in
                                let loop, env = env#get_label in
                                let cond, env = env#get_label in
                                let env, fe, se = compile_expr false lexp env c in
                                let env, _ , s  = compile_expr false cond env s in
                                env, false, [JMP cond; FLABEL loop] @ s @ [LABEL cond] @ se @ (if fe then [LABEL lexp] else []) @ [CJMP ("nz", loop)]
                                                                                                   
-  | Expr.Repeat (s, c)      -> let lexp , env = env#get_label in
+  | Expr.Repeat (_, s, c)   -> let lexp , env = env#get_label in
                                let loop , env = env#get_label in
                                let check, env = env#get_label in
                                let env, fe  , se   = compile_expr false lexp env c in
                                let env, flag, body = compile_expr false check env s in
                                env, false, [LABEL loop] @ body @ (if flag then [LABEL check] else []) @ se @ (if fe then [LABEL lexp] else []) @ [CJMP ("z", loop)]
 
-  | Expr.Return (Some e)    -> let lret, env = env#get_label in
+  | Expr.Return (_, Some e) -> let lret, env = env#get_label in
                                add_code (compile_expr true lret env e) lret false [JMP env#end_label] (* [RET] *)
                                
-  | Expr.Return None        -> env, false, [CONST 0; (*RET*) JMP env#end_label]
+  | Expr.Return (_, None)     -> env, false, [CONST 0; (*RET*) JMP env#end_label]
 
-  | Expr.Leave              -> env, false, []
+  | Expr.Leave (_)           -> env, false, []
                                  
-  | Expr.Case (e, brs, loc, atr) ->
+  | Expr.Case (loc, e, brs, atr) ->
      let n          = List.length brs - 1 in
      let lfail, env = env#get_label in
      let lexp , env = env#get_label in
