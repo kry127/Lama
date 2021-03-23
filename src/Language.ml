@@ -696,11 +696,11 @@ module Expr =
             | (Value.String _, TString) -> true
             | (Value.Array arr, TArr(tarrElem)) -> Array.for_all (fun arrElem -> value_conforms arrElem tarrElem) arr
             | (Value.Sexp (name, vals), TSexp(tname, tvals)) ->
-                name == tname && List.for_all2 value_conforms (Array.to_list vals) tvals
+                String.equal name tname && List.for_all2 value_conforms (Array.to_list vals) tvals
             (* For functions we can only check arity for raw value, but nothing more *)
             | (Value.Closure (args, _, _), TLambda(targs, _))
             | (Value.FunRef (_, args, _, _) , TLambda(targs, _)) ->
-                List.length args == List.length targs
+                List.compare_lengths args targs == 0
             | (Value.Builtin builtin, t) -> report_error "cannot infer builtin right now" (* TODO *)
             (* TODO union *)
             | _, _ -> false
@@ -768,6 +768,13 @@ module Expr =
       (* Use hashtbl of Typing.t as keys instead of set (in set we need total ordering *)
       module TypeHsh = Hashtbl.Make (struct type t = Typing.t let hash = Hashtbl.hash let equal = (==) end)
 
+      (*
+         Generate cast expression. Expression e is casted from 'expT' expected type to 'actT' actual type
+         Note, that type of e and actT should accord, use type_check(_int) function to infer type of e
+      *)
+      let genCast ?(desc="") l e actT expT =
+        Cast (l, e, expT, Printf.sprintf "%s (\"%s\" => \"%s\")" desc (show(t) actT) (show(t) expT), true)
+
       let type_check ctx expr =
         let rec type_check_int ret_ht ctx expr
           =
@@ -789,8 +796,8 @@ module Expr =
                                        then report_error ~loc:(Some l) @@ Printf.sprintf "right binary operand of type \"%s\" does not conforms to TConst" (show(t) t2)
                                        else
                                          (* Already checked conformity, so we can safely match with 'Some' value *)
-                                         let cst_e1 = Cast (l, e1, TConst, "invalid left operand of operand" ^ op, true) in
-                                         let cst_e2 = Cast (l, e2, TConst, "invalid right operand of operand" ^ op, true) in
+                                         let cst_e1 = genCast ~desc:"left operand cast fail" l e1 t1 TConst in
+                                         let cst_e2 = genCast ~desc:"right operand cast fail"l e2 t2 TConst in
                                          TConst, Binop(l, op, cst_e1, cst_e2)
             | ElemRef (l, arr, index) (* Both value and reference versions are typed the same way... *)
             | Elem (l, arr, index)     -> let t_arr, e_arr     = type_check_int ret_ht ctx arr   in
@@ -798,7 +805,7 @@ module Expr =
                                        if conforms t_index TConst
                                        then
                                          (* Cast index to integer and repack AST *)
-                                         let e_index_cst = Cast (l, e_index, TConst, "index is not a number", true) in
+                                         let e_index_cst = genCast ~desc:"index cast fail" l e_index t_index TConst in
                                          let repacked_ast = match expr with
                                              | ElemRef (l, arr, index) -> ElemRef(l, arr, e_index_cst)
                                              | Elem    (l, arr, index) -> Elem   (l, arr, e_index_cst)
@@ -831,12 +838,12 @@ module Expr =
                                               with Invalid_argument(_) -> report_error ~loc:(Some l) ("Arity mismatch in function call") (* TODO NO VARIADIC SUPPORT *)
                                            then (* In 'then' branch each expression from t_args conform to the premise of function *)
                                               (* Step 1. cast all arguments to the input type of the function *)
-                                              let cast_args = List.map2 (fun (ex, tl) tr -> Cast(l, ex, tr, "invalid argument passed", true))
+                                              let cast_args = List.map2 (fun (exp, tExp) tAct -> genCast ~desc:"arg cast fail" l exp tExp tAct)
                                                                         (List.combine e_args t_args) premise in
                                               (* Step 2. then perform call of the function *)
                                               let call_func = Call(l, e_f, cast_args) in
                                               (* Step 3. cast result of the function to the resulting type *)
-                                              let casted_call_func = Cast(l, call_func, conclusion, "function returned value with unexpected type", true) in
+                                              let casted_call_func = genCast ~desc:"func result cast fail" l call_func TAny conclusion in
                                               conclusion, casted_call_func
                                            else begin
                                              (* Put all errors in the log *)
@@ -866,7 +873,7 @@ module Expr =
                                          | TRef (t_x) ->
                                              if conforms t_exp t_x
                                              then
-                                               let e_exp_cst = Cast(l, e_exp, t_x, "assignment cast failed", true) in
+                                               let e_exp_cst = genCast ~desc:"assignment cast failed" l e_exp t_exp t_x in
                                                t_x, Assign(l, e_reff, e_exp_cst)
                                              else report_error ~loc:(Some l) "cannot assign a value with inappropriate type"
                                        in ret
@@ -880,7 +887,7 @@ module Expr =
                                        let t_rbr,  e_rbr  = type_check_int ret_ht ctx rbr  in
                                        if conforms t_cond TConst
                                        then
-                                         let e_cond_cst = Cast(l, e_cond, TConst, "if condition didn't evaluate to boolean", true) in
+                                         let e_cond_cst = genCast ~desc:"if condition didn't evaluate to boolean" l e_cond t_cond TConst in
                                          union_contraction (TUnion(t_lbr :: t_rbr :: []))
                                          , If(l, e_cond_cst, e_lbr, e_rbr)
                                        else report_error ~loc:(Some l) (Printf.sprintf "if condition should be \"%s\", but given type \"%s\"" (show(t) TConst) (show(t) t_cond))
@@ -889,7 +896,7 @@ module Expr =
                                        let t_body, e_body = type_check_int ret_ht ctx body in
                                        if conforms t_cond TConst
                                        then
-                                         let e_cond_cst = Cast(l, e_cond, TConst, "cycle condition didn't evaluate to boolean", true) in
+                                         let e_cond_cst = genCast ~desc:"cycle condition didn't evaluate to boolean" l e_cond t_cond TConst in
                                          let repacked_ast = match expr with
                                          | While (ll, cond, body) -> While (ll, e_cond_cst, e_body)
                                          | Repeat(ll, body, cond) -> Repeat(ll, e_body, e_cond_cst)
@@ -1109,16 +1116,19 @@ module Expr =
            | v -> v
          in
          eval (st, i, o, v :: vs) (Skip l) k
-      | Cast (l, e, t, label, positive) ->
+      | Cast (l, e, tt, label, positive) ->
            let inferedType, newExpr = Typecheck.typecheck e in
            let posAsStr = if positive then "+" else "-" in
-           if not (Typecheck.Conformity.conforms inferedType t)
+           if not (Typecheck.Conformity.conforms inferedType tt)
            then (
-             report_error ~loc:(Some l) (Printf.sprintf "Static cast%s failed at runtime: \"%s\"" posAsStr label)
+             report_error ~loc:(Some l) (Printf.sprintf "[SHOULD NEVER HAPPEN] Static cast%s failed at runtime: \"%s\"" posAsStr label)
            )
            else eval conf k (schedule_list [newExpr; Intrinsic (l, fun (st, i, o, s::vs) ->
-               if not (Typecheck.Conformity.value_conforms s t)
-               then report_error ~loc:(Some l) (Printf.sprintf "Cast%s failed: \"%s\"" posAsStr label)
+               if not (Typecheck.Conformity.value_conforms s tt)
+               then report_error ~loc:(Some l) (Printf.sprintf "Cast%s failed for value=\"%s\"\n %s"
+                                                posAsStr
+                                                (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") s)
+                                                label)
                else (st, i, o, s::vs) (* act like nothing happened *)
            )])
       | Ref (l, x) ->
