@@ -506,7 +506,7 @@ module Expr =
     (* return statement           *) | Return    of Loc.t * t option
     (* ignore a value             *) | Ignore    of Loc.t * t
     (* entering the scope         *) | Scope     of Loc.t * (string * decl) list * t
-    (* lambda expression          *) | Lambda    of Loc.t * string list * t
+    (* lambda expression          *) | Lambda    of Loc.t * (string * Typing.t) list * t
     (* leave a scope              *) | Leave     of Loc.t
     (* intrinsic (for evaluation) *) | Intrinsic of Loc.t * (t config, t config) arrow
     (* control (for control flow) *) | Control   of Loc.t * (t config, t * t config) arrow
@@ -604,7 +604,6 @@ module Expr =
       module Conformity =
         struct
           let tmp_name = "tmp" (* name for variable that stores everything *)
-          let loc = (0, 0) (* TODO need to know real location, not fake one, SEE OTHER (0, 0) STUFF! *)
 
           (* check that type 'lhs' is materialization of type 'rhs' *)
           let rec materialize lhs rhs
@@ -612,7 +611,7 @@ module Expr =
             | (_   , TAny) -> true  (* Anything is materialization of TAny, obviously. *)
             | (TArr l, TArr r)
             | (TRef l, TRef r) -> materialize l r
-            | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    name_l = name_r
+            | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    String.equal name_l name_r
                                                                   && List.length types_l = List.length types_r
                                                                   && List.compare_lengths types_l types_r == 0
                                                                   && List.for_all2 materialize types_l types_r
@@ -635,7 +634,7 @@ module Expr =
             | (_   , TAny) -> true  (* Anything is subtype of TAny, obviously. *)
             | (TArr l, TArr r)
             | (TRef l, TRef r) -> subtype l r
-            | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    name_l = name_r
+            | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    String.equal name_l name_r
                                                                   && List.length types_l = List.length types_r
                                                                   && List.compare_lengths types_l types_r == 0
                                                                   && List.for_all2 subtype types_l types_r
@@ -662,7 +661,7 @@ module Expr =
             | (TAny, _   ) -> true
             | (TArr l, TArr r)
             | (TRef l, TRef r) -> conforms l r
-            | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    name_l = name_r
+            | (TSexp(name_l, types_l), TSexp(name_r, types_r)) ->    String.equal name_l name_r
                                                                   && List.length types_l = List.length types_r
                                                                   && List.compare_lengths types_l types_r == 0
                                                                   && List.for_all2 conforms types_l types_r
@@ -702,7 +701,7 @@ module Expr =
             | (Value.FunRef (_, args, _, _) , TLambda(targs, _)) ->
                 List.compare_lengths args targs == 0
             | (Value.Builtin builtin, t) -> report_error "cannot infer builtin right now" (* TODO *)
-            (* TODO union *)
+            | (_, TUnion types) -> List.exists (fun tt -> value_conforms value tt) types
             | _, _ -> false
 
 
@@ -764,7 +763,6 @@ module Expr =
                                                           But TVariadic is hard to typecheck right now, we need to rewrite it *)
 
       (* Function for type checking: accepts context and expression, returns it's type and new expression *)
-      (* TODO optimization needed: watch the type of the subtrees lazily *)
       (* Use hashtbl of Typing.t as keys instead of set (in set we need total ordering *)
       module TypeHsh = Hashtbl.Make (struct type t = Typing.t let hash = Hashtbl.hash let equal = (==) end)
 
@@ -865,8 +863,9 @@ module Expr =
                                        let resType, resExpr = ret_func t_f in
                                        resType, resExpr
 
-            | Assign(l, reff, exp)  -> let t_reff, e_reff = type_check_int ret_ht ctx reff in
+            | Assign(_, reff, exp)  -> let t_reff, e_reff = type_check_int ret_ht ctx reff in
                                        let t_exp,  e_exp  = type_check_int ret_ht ctx exp  in
+                                       let l = exprLoc reff in
                                        let ret =
                                          match t_reff with
                                          | TAny -> TAny, Assign(l, e_reff, e_exp)
@@ -1002,9 +1001,7 @@ module Expr =
                                        t_expr, Scope(l, List.rev e_decls, e_expr)
             | Lambda(l, args, body) ->  (* collect return yielding types and join with this type with TUnion *)
                                     let sub_ret_ht = (TypeHsh.create 128) in
-                                    (* Assume that argument types are of type TAny *)
-                                    (* TODO should we exploit type annotation of the function? *)
-                                    let exp_context = List.fold_right (fun name ctx -> Context.extend ctx name TAny)
+                                    let exp_context = List.fold_right (fun (name, tt) ctx -> Context.extend ctx name tt)
                                                                            args (Context.expand ctx) in
                                     let t_body, e_body = type_check_int sub_ret_ht exp_context body in
                                     let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
@@ -1016,9 +1013,6 @@ module Expr =
             | Control   (_)         -> report_error               ("Cannot infer the type for internal compiler node 'Control'")
         in
         type_check_int (TypeHsh.create 128) ctx expr
-
-
-
 
       (* Top level typechecker *)
       let typecheck ast =
@@ -1078,7 +1072,7 @@ module Expr =
       in
       match expr with
       | Lambda (l, args, body) ->
-         eval (st, i, o, Value.Closure (args, body, [|st|]) :: vs) (Skip l) k
+         eval (st, i, o, Value.Closure (List.map fst args, body, [|st|]) :: vs) (Skip l) k
       | Scope (l, defs, body) ->
          let vars, body, bnds =
            List.fold_left
@@ -1238,9 +1232,7 @@ module Expr =
     | _    -> expr
 
   (* semantics for infixes created in runtime *)
-  let sem s =
-    let l = (0, 0) in
-    (fun x atr y -> ignore atr (Call (l, Var (l, s), [x; y]))), (fun _ -> Val, Val)
+  let sem l s = (fun x atr y -> ignore atr (Call (l, Var (l, s), [x; y]))), (fun _ -> Val, Val)
 
   let sem_init s = fun x atr y ->
     let l = (0, 0) in
@@ -1369,24 +1361,23 @@ module Expr =
             let name = infix_name s in Loc.attach name l#coord; ignore atr (Var (l#coord, name))
           )
       }
-      | l:$ %"fun" "(" args:!(Util.list0)[Pattern.parse] ")"
-           typ:(-"::" $ !(Typing.typeParser))?
+      | l:$ %"fun" "(" args:!(Util.list0)[ostap(!(Pattern.parse) (-"::" !(Typing.typeParser))?)] ")"
+           retType:(-"::" $ !(Typing.typeParser))?
            "{" body:scope[infix][Weak] "}"=> {notRef atr} :: (not_a_reference l) => {
           let args, body =
             List.fold_right
-              (fun arg (args, body) ->
+              (fun (arg, optType) (args, body) ->
+                 let argType = Option.value optType ~default:(Typing.TAny) in
                  match arg with
-                 | Pattern.Named (name, Pattern.Wildcard) -> name :: args, body
-                 | Pattern.Wildcard -> env#get_tmp :: args, body
+                 | Pattern.Named (name, Pattern.Wildcard) -> (name, argType) :: args, body
+                 | Pattern.Wildcard -> (env#get_tmp, argType) :: args, body
                  | p ->
                     let arg = env#get_tmp in
-                    arg :: args, Case (l#coord, Var (l#coord, arg), [p, body], Weak)
+                    (arg, argType) :: args, Case (l#coord, Var (l#coord, arg), [p, body], Weak)
               )
               args
               ([], body)
           in
-          let typeNode = match typ with | Some (_, x) -> x | None -> Typing.TAny in
-          (* TODO insert typeNode in type definition block, or get rid of it... *)
           ignore atr (Lambda (l#coord, args, body))
       }
 
@@ -1440,7 +1431,8 @@ module Expr =
       | %"return" l:$ e:basic[infix][Val]? => {isVoid atr} => {Return (l#coord, e)}
       | %"case" l:$ e:parse[infix][Val] %"of" bs:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" scope[infix][atr])] %"esac"{Case (l#coord, e, bs, atr)}
       | %"lazy" l:$ e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (l#coord, Var (l#coord, "makeLazy"), [Lambda (l#coord, [], e)]))}
-      | %"eta" l:$ e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda (l#coord, [name], Call (l#coord, e, [Var (l#coord, name)])))}
+      (* TODO make check of static type safety of eta-expansion *)
+      | %"eta" l:$ e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda (l#coord, [name, TAny], Call (l#coord, e, [Var (l#coord, name)])))}
       | %"syntax" l:$ "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr e}
       | -"(" parse[infix][atr] -")";
       syntax[infix]: ss:!(Util.listBy)[ostap ("|")][syntaxSeq infix] le:$ {
@@ -1472,11 +1464,11 @@ module Expr =
         List.fold_right (fun (loc, _, p, s) ->
                            let make_right =
                              match p with
-                             | None                                          -> (fun body -> Lambda (loc#coord, [env#get_tmp], body))
-                             | Some (Pattern.Named (name, Pattern.Wildcard)) -> (fun body -> Lambda (loc#coord, [name], body))
+                             | None                                          -> (fun body -> Lambda (loc#coord, [env#get_tmp, Typing.TAny], body))
+                             | Some (Pattern.Named (name, Pattern.Wildcard)) -> (fun body -> Lambda (loc#coord, [name, Typing.TAny], body))
                              | Some p                                        -> (fun body ->
                                                                                    let arg = env#get_tmp in
-                                                                                   Lambda (loc#coord, [arg], Case (loc#coord, Var (loc#coord, arg), [p, body], Val))
+                                                                                   Lambda (loc#coord, [arg, Typing.TAny], Case (loc#coord, Var (loc#coord, arg), [p, body], Val))
                                                                                 )
                            in
                            function
@@ -1507,15 +1499,15 @@ module Expr =
     (* Workaround until Ostap starts to memoize properly *)
     ostap (
       constexpr:
-        n:DECIMAL                                          {Const ((0, 0), n)}
-      | s:STRING                                           {String ((0, 0), s)}
-      | c:CHAR                                             {Const ((0, 0), Char.code c)}
-      | %"true"                                            {Const ((0, 0), 1)}
-      | %"false"                                           {Const ((0, 0), 0)}
-      | "[" es:!(Util.list0)[constexpr] "]"                {Array ((0, 0), es)}
-      | "{" es:!(Util.list0)[constexpr] "}"                {match es with [] -> Const ((0, 0), 0) | _  -> List.fold_right (fun x acc -> Sexp ((0, 0), "cons", [x; acc])) es (Const ((0, 0), 0))}
-      | t:UIDENT args:(-"(" !(Util.list)[constexpr] -")")? {Sexp ((0, 0), t, match args with None -> [] | Some args -> args)}
-      | l:$ x:LIDENT                                       {Loc.attach x l#coord; Var ((0, 0), x)}
+        l:$ n:DECIMAL                                          {Const (l#coord, n)}
+      | l:$ s:STRING                                           {String (l#coord, s)}
+      | l:$ c:CHAR                                             {Const (l#coord, Char.code c)}
+      | l:$ %"true"                                            {Const (l#coord, 1)}
+      | l:$ %"false"                                           {Const (l#coord, 0)}
+      | l:$ "[" es:!(Util.list0)[constexpr] "]"                {Array (l#coord, es)}
+      | l:$ "{" es:!(Util.list0)[constexpr] "}"                {match es with [] -> Const (l#coord, 0) | _  -> List.fold_right (fun x acc -> Sexp (l#coord, "cons", [x; acc])) es (Const (l#coord, 0))}
+      | l:$ t:UIDENT args:(-"(" !(Util.list)[constexpr] -")")? {Sexp (l#coord, t, match args with None -> [] | Some args -> args)}
+      | l:$ l:$ x:LIDENT                                       {Loc.attach x l#coord; Var (l#coord, x)}
       | -"(" constexpr -")"
     )
     (* end of the workaround *)
@@ -1696,7 +1688,7 @@ module Definition =
           if m <> None && Infix.is_predefined op then report_error ~loc:(Some l#coord) (Printf.sprintf "redefinition of standard infix operator \"%s\" can not be exported" op);
           let name = infix_name op in
           Loc.attach name l#coord;
-          match md (Expr.sem name) infix with
+          match md (Expr.sem l#coord name) infix with
           | `Ok infix' -> unopt_mod m, op, name, infix', true
           | `Fail msg  -> report_error ~loc:(Some l#coord) msg
       };
@@ -1845,7 +1837,7 @@ ostap (
           (fun infix item ->
              let insert name infix md =
                let name = infix_name name in
-               match md (Expr.sem name) infix with
+               match md (Expr.sem l#coord name) infix with
                | `Ok infix' -> infix'
                | `Fail msg  -> report_error msg
              in
@@ -1865,7 +1857,7 @@ ostap (
 };
 
 (* Workaround until Ostap starts to memoize properly *)
-    constparse[cmd]: <(is, infix)> : imports[cmd] d:!(Definition.constdef) {(is, []), Expr.Scope ((0, 0), d, Expr.materialize Expr.Weak (Expr.Skip (0, 0)))}
+    constparse[cmd]: <(is, infix)> : imports[cmd] l:$ d:!(Definition.constdef) {(is, []), Expr.Scope (l#coord, d, Expr.materialize Expr.Weak (Expr.Skip (0, 0)))}
 (* end of the workaround *)
 )
 
