@@ -1,0 +1,3 @@
+local promise :: Int -> Str; -- just type declaration (should fail, because it is shallow type declaration without definition)
+
+promise "kek" -- for skipping test

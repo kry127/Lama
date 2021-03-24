@@ -1,0 +1,18 @@
+-- scope typing
+fun f(a) {
+  a.string
+}
+
+fun g(b) {
+  1 - b
+}
+
+-- scope 2
+{
+  f :: Int -> Str;
+  g :: ? -> Int;
+
+
+  f(g(Double(0))) -- назначили правильные типы в другом скоупе (но упали :D)
+};
+Unit

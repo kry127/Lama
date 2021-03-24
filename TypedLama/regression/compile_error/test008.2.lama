@@ -1,0 +1,27 @@
+-- scope typing
+fun f(a) {
+  a.string
+}
+
+fun g(b) {
+  1 - b
+}
+
+-- scope 2
+{
+  f :: Double(Int) -> Str;
+  g :: ? -> Int;
+
+
+  f(Double(g(0))) -- назначили другие типы в другом скоупе
+  ;
+  -- scope nested
+  {
+    -- проверка консистентности используемых типов в вышестоящем скоупе
+    f :: [Int] -> Int; -- увы, не пройдёт
+    g :: Str -> [Int]; -- он тоже не пройдёт
+
+    f(g("hello, world"))
+  }
+};
+Unit

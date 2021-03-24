@@ -551,6 +551,8 @@ module Expr =
       module Context =
         struct
 
+          (* Layer -- is the list of declarations: where declaration is name with it's type. *)
+          (* bool serves as indicator: true -- it is concrete definition, false -- shallow type definition *)
           @type ctxLayer = CtxLayer of (string * Typing.t) list with show, html
 
           (* Context: initial (empty), scope context *)
@@ -570,11 +572,20 @@ module Expr =
              https://ocaml.org/releases/4.11/ocaml-4.11-refman.pdf *)
           let rec get_type ctx name
             = match ctx with
-              | ZeroCtx               -> TAny  (* Dilemma: it is either error, or this name can be external symbol *)
+              | ZeroCtx              -> None  (* Dilemma: it is either error, or this name can be external symbol *)
               | SuccCtx (CtxLayer scope, ctx') ->
                 match List.assoc_opt name scope with
                 | None        -> get_type ctx' name (* Try to find type in upper instances *)
-                | Some typing -> typing            (* Or return found one *)
+                | Some typing -> Some typing        (* Or return found one *)
+
+          (* The same as get_type, but searches for type with label set to true *)
+          let rec get_concrete_type ctx name
+            = match ctx with
+              | ZeroCtx               -> None  (* Dilemma: it is either error, or this name can be external symbol *)
+              | SuccCtx (CtxLayer scope, ctx') ->
+                match List.assoc_opt name scope with
+                | None         -> get_type ctx' name
+                | Some typing  -> Some typing
 
 
           let extend_layer, extend =
@@ -582,9 +593,9 @@ module Expr =
             let extend_layer ctx_layer name typing
               = match ctx_layer with
                 | CtxLayer ctx_layer ->
-                  match List.find_opt (fun (pname, _) -> pname = name ) ctx_layer with
+                  match List.find_opt (fun (pname, _) -> String.equal pname name) ctx_layer with
                   | None               -> CtxLayer (List.cons (name, typing) ctx_layer) (* Successfully added type to scope *)
-                  | Some ((_, typing)) -> report_error ~loc:(Loc.get name) ("redefinition of typing for " ^ name ^ " in the same scope")
+                  | Some typing -> report_error ~loc:(Loc.get name) ("redefinition of typing for " ^ name ^ " in the same scope")
             in
             (* Extend current typing scope with the typing information: the [name] has the type [typing] *)
             let extend ctx name typing
@@ -773,7 +784,7 @@ module Expr =
       let genCast ?(desc="") l e actT expT =
         Cast (l, e, expT, Printf.sprintf "%s (\"%s\" => \"%s\")" desc (show(t) actT) (show(t) expT), true)
 
-      let type_check ctx expr =
+      let type_check ctx defs expr =
         let rec type_check_int ret_ht ctx expr
           =
             match expr with
@@ -784,8 +795,8 @@ module Expr =
             | String _                 -> TString, expr
             | Sexp (l, name, subexprs) -> let types, exprs = List.split ( List.map (fun exp -> type_check_int ret_ht ctx exp) subexprs) in
                                           TSexp(name, types), Sexp(l, name, exprs)
-            | Var   (_, name)            -> Context.get_type ctx name, expr
-            | Ref   (_, name)            -> TRef (Context.get_type ctx name), expr
+            | Var   (_, name)            -> Option.value ~default:TAny (Context.get_type ctx name), expr
+            | Ref   (_, name)            -> TRef (Option.value ~default:TAny (Context.get_type ctx name)), expr
             | Binop (l, op, exp1, exp2)-> let t1, e1 = type_check_int ret_ht ctx exp1 in
                                        let t2, e2 = type_check_int ret_ht ctx exp2 in
                                        if not (conforms t1 TConst)
@@ -823,9 +834,9 @@ module Expr =
                                        let ret_type = match t_exp with
                                                       | TString | TArr(_) | TSexp(_, _) | TAny -> TConst
                                                       | _ -> report_error ~loc:(Some l) "Length has only strings, arrays and S-expressions"
-                                       in ret_type, e_exp
-            | StringVal (_, exp)    -> let _, e_exp = type_check_int ret_ht ctx exp in
-                                       TString, e_exp (* The most plesant rule: anything can be matched to a string *)
+                                       in ret_type, Length(l, e_exp)
+            | StringVal (l, exp)    -> let _, e_exp = type_check_int ret_ht ctx exp in
+                                       TString, StringVal(l, e_exp) (* The most plesant rule: anything can be matched to a string *)
             | Call(l, f, args)      -> let t_f, e_f = type_check_int ret_ht ctx f in
                                        let t_args, e_args = List.split (List.map (fun arg -> type_check_int ret_ht ctx arg) args) in
                                        let rec ret_func t_ff =
@@ -950,7 +961,7 @@ module Expr =
                                            | None   -> ctx_layer
                                          ) in
                                          let exp_ctx = Context.expandWith exp_ctx_layer ctx in
-                                         let exp_type = Context.get_type exp_ctx name in
+                                         let exp_type = Option.value ~default:TAny (Context.get_type exp_ctx name) in
                                          (exp_ctx_layer, exp_ctx, exp_type)
                                        in
                                        let ctx_layer, e_decls = List.fold_left (
@@ -980,8 +991,15 @@ module Expr =
                                                    -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
                                                       (match maybe_def with
                                                       | None     -> (* This is the case of type declaration of the variable *)
-                                                                    (* TODO check the symbol is actually exists *)
-                                                                    acc_ext, (name, decl) :: e_decls
+                                                                    let definitelyType = Option.value ~default:(Typing.TAny) maybeType in
+                                                                    let optAncestorConcreteType = Context.get_type ctx name in
+                                                                    (* if Option.is_none optAncestorConcreteType
+                                                                    then report_error ~loc:(Some l) (Printf.sprintf "Cannot find root type of variable \"%s\"" name)
+                                                                    else *)
+                                                                    let typeToCheck = Option.value ~default:(Typing.TAny) optAncestorConcreteType in
+                                                                    if not (conforms definitelyType typeToCheck)
+                                                                    then report_error ~loc:(Some l) ("Type usage confronts with declared interface")
+                                                                    else acc_ext, e_decls (* Drop declaration to avoid confusion *)
                                                       | Some def ->
                                                                     let t_def, e_def = type_check_int ret_ht exp_ctx def in
                                                                     if not (conforms t_def exp_type)
@@ -1018,7 +1036,7 @@ module Expr =
 
       (* Top level typechecker *)
       let typecheck ast =
-        let new_type, new_ast = type_check Context.ZeroCtx ast
+        let new_type, new_ast = type_check Context.ZeroCtx Context.ZeroCtx ast
         in (new_type, new_ast)
 
     end

@@ -1,0 +1,29 @@
+-- TODO move this source file to compile error when ready
+
+-- scope typing
+fun f(a) {
+  a.string
+}
+
+fun g(b) {
+  b - 1
+}
+
+-- scope 2
+{
+  f :: ? -> Str;
+  g :: ? -> ?; -- баг: стирание настоящего типа
+
+
+  f(Double(g(0)))
+  ;
+  -- scope nested
+  {
+    -- нужна ли проверка консистентности используемых типов в вышестоящем скоупе? Ответ: необходимо смотреть на определение объекта
+    f :: [Int] -> Str;
+    g :: Str -> [Int];
+
+    f(g("hello, world")) -- попытались поприветствовать мир, но упали по пути
+  }
+};
+Unit

@@ -17,5 +17,3 @@ local a = 3, b = 4; -- we can have multiple definitions!
 local p1left :: Int = 0, p1right        = "hello";
 local p2left        = 0, p2right :: Str = "hello";
 local p3left :: Int = 0, p3right :: Str = "hello";
-
-local promise :: Int -> Str; -- just type declaration (should fail, honestly!)
