@@ -506,7 +506,7 @@ module Expr =
     (* return statement           *) | Return    of Loc.t * t option
     (* ignore a value             *) | Ignore    of Loc.t * t
     (* entering the scope         *) | Scope     of Loc.t * (string * decl) list * t
-    (* lambda expression          *) | Lambda    of Loc.t * (string * Typing.t) list * t
+    (* lambda expression          *) | Lambda    of Loc.t * (string * Typing.t) list * t * Typing.t
     (* leave a scope              *) | Leave     of Loc.t
     (* intrinsic (for evaluation) *) | Intrinsic of Loc.t * (t config, t config) arrow
     (* control (for control flow) *) | Control   of Loc.t * (t config, t * t config) arrow
@@ -524,7 +524,7 @@ module Expr =
                            | Ref(l, _) | Binop(l, _, _, _) | Elem(l, _, _) | ElemRef(l, _, _) | Length(l, _)
                            | StringVal(l, _) | Call(l, _, _) | Assign(l, _, _) | Seq(l, _, _) | Skip(l)
                            | If(l, _, _, _) | While(l, _, _) | Repeat(l, _, _) | Case(l, _, _, _) | Return(l, _)
-                           | Ignore(l, _) | Scope(l, _, _) | Lambda(l, _, _) | Leave(l)
+                           | Ignore(l, _) | Scope(l, _, _) | Lambda(l, _, _, _) | Leave(l)
                            | Intrinsic(l, _) | Control(l, _) -> l
 
     (* Available binary operators:
@@ -999,7 +999,7 @@ module Expr =
                                            ) ((Context.CtxLayer []), []) decls in
                                        let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
                                        t_expr, Scope(l, List.rev e_decls, e_expr)
-            | Lambda(l, args, body) ->  (* collect return yielding types and join with this type with TUnion *)
+            | Lambda(l, args, body, retType) ->  (* collect return yielding types and join with this type with TUnion *)
                                     let sub_ret_ht = (TypeHsh.create 128) in
                                     let exp_context = List.fold_right (fun (name, tt) ctx -> Context.extend ctx name tt)
                                                                            args (Context.expand ctx) in
@@ -1007,7 +1007,9 @@ module Expr =
                                     let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
                                                       [t_body] (TypeHsh.to_seq_keys sub_ret_ht) in
                                     let l_ret_type = union_contraction (TUnion(union_types)) in
-                                    TLambda(List.map (fun _ -> TAny) args, l_ret_type), Lambda(l, args, e_body)
+                                    if conforms l_ret_type retType
+                                    then TLambda(List.map snd args, retType), Lambda(l, args, e_body, retType)
+                                    else report_error ~loc:(Some l) ("Function implementation return type does not matches with annotated type in interface")
             | Leave (l)             -> report_error ~loc:(Some l) ("Cannot infer the type for internal compiler node 'Leave'")
             | Intrinsic (_)         -> report_error               ("Cannot infer the type for internal compiler node 'Intrinsic'")
             | Control   (_)         -> report_error               ("Cannot infer the type for internal compiler node 'Control'")
@@ -1071,7 +1073,7 @@ module Expr =
         Printf.eprintf "End Values\n%!"
       in
       match expr with
-      | Lambda (l, args, body) ->
+      | Lambda (l, args, body, _) ->
          eval (st, i, o, Value.Closure (List.map fst args, body, [|st|]) :: vs) (Skip l) k
       | Scope (l, defs, body) ->
          let vars, body, bnds =
@@ -1362,12 +1364,12 @@ module Expr =
           )
       }
       | l:$ %"fun" "(" args:!(Util.list0)[ostap(!(Pattern.parse) (-"::" !(Typing.typeParser))?)] ")"
-           retType:(-"::" $ !(Typing.typeParser))?
+           retType:(-"::" !(Typing.typeParser))?
            "{" body:scope[infix][Weak] "}"=> {notRef atr} :: (not_a_reference l) => {
           let args, body =
             List.fold_right
               (fun (arg, optType) (args, body) ->
-                 let argType = Option.value optType ~default:(Typing.TAny) in
+                 let argType = Option.value ~default:(Typing.TAny) optType in
                  match arg with
                  | Pattern.Named (name, Pattern.Wildcard) -> (name, argType) :: args, body
                  | Pattern.Wildcard -> (env#get_tmp, argType) :: args, body
@@ -1378,7 +1380,7 @@ module Expr =
               args
               ([], body)
           in
-          ignore atr (Lambda (l#coord, args, body))
+          ignore atr (Lambda (l#coord, args, body, Option.value ~default:(Typing.TAny) retType))
       }
 
       | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (Array (l#coord, es))}
@@ -1430,9 +1432,9 @@ module Expr =
       }
       | %"return" l:$ e:basic[infix][Val]? => {isVoid atr} => {Return (l#coord, e)}
       | %"case" l:$ e:parse[infix][Val] %"of" bs:!(Util.listBy)[ostap ("|")][ostap (!(Pattern.parse) -"->" scope[infix][atr])] %"esac"{Case (l#coord, e, bs, atr)}
-      | %"lazy" l:$ e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (l#coord, Var (l#coord, "makeLazy"), [Lambda (l#coord, [], e)]))}
+      | %"lazy" l:$ e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {env#add_import "Lazy"; ignore atr (Call (l#coord, Var (l#coord, "makeLazy"), [Lambda (l#coord, [], e, TAny)]))}
       (* TODO make check of static type safety of eta-expansion *)
-      | %"eta" l:$ e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda (l#coord, [name, TAny], Call (l#coord, e, [Var (l#coord, name)])))}
+      | %"eta" l:$ e:basic[infix][Val] => {notRef atr} :: (not_a_reference l) => {let name = env#get_tmp in ignore atr (Lambda (l#coord, [name, TAny], Call (l#coord, e, [Var (l#coord, name)]), TAny))}
       | %"syntax" l:$ "(" e:syntax[infix] ")" => {notRef atr} :: (not_a_reference l) => {env#add_import "Ostap"; ignore atr e}
       | -"(" parse[infix][atr] -")";
       syntax[infix]: ss:!(Util.listBy)[ostap ("|")][syntaxSeq infix] le:$ {
@@ -1464,11 +1466,12 @@ module Expr =
         List.fold_right (fun (loc, _, p, s) ->
                            let make_right =
                              match p with
-                             | None                                          -> (fun body -> Lambda (loc#coord, [env#get_tmp, Typing.TAny], body))
-                             | Some (Pattern.Named (name, Pattern.Wildcard)) -> (fun body -> Lambda (loc#coord, [name, Typing.TAny], body))
+                             (* TODO how to know arg type and return type of lambdas? *)
+                             | None                                          -> (fun body -> Lambda (loc#coord, [env#get_tmp, Typing.TAny], body, TAny))
+                             | Some (Pattern.Named (name, Pattern.Wildcard)) -> (fun body -> Lambda (loc#coord, [name, Typing.TAny], body, TAny))
                              | Some p                                        -> (fun body ->
                                                                                    let arg = env#get_tmp in
-                                                                                   Lambda (loc#coord, [arg, Typing.TAny], Case (loc#coord, Var (loc#coord, arg), [p, body], Val))
+                                                                                   Lambda (loc#coord, [arg, Typing.TAny], Case (loc#coord, Var (loc#coord, arg), [p, body], Val), TAny)
                                                                                 )
                            in
                            function

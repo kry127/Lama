@@ -1,5 +1,4 @@
-local inc :: Int -> Int = fun (x) {
-  -- x :: Int; -- type declaration
+local inc :: Int -> Int = fun (x :: Int) {
   x + 1
 };
 

@@ -1,0 +1,6 @@
+local withClosure = fun (x) :: Int -> Int {
+  fun (y :: Int) {
+    2*x*y
+  }
+};
+Unit

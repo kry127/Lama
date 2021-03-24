@@ -763,7 +763,7 @@ let compile cmd ((imports, infixes), p) =
      let env, flag2, s2 = compile_list tail  l   env es in
      add_code (env, flag1, s1) les flag2 s2
   and compile_expr tail l env = function
-  | Expr.Lambda (_, args, b) ->
+  | Expr.Lambda (_, args, b, _) ->
      let env, lines = List.fold_left (fun (env, acc) (name, tt) -> let env, ln = env#gen_line name in env, acc @ ln) (env, []) args in
      let env, name  = env#add_lambda (List.map fst args) b in
      env#register_call name, false, lines @ [PROTO (name, env#current_function)] 
