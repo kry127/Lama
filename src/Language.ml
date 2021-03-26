@@ -740,36 +740,46 @@ module Expr =
       open Conformity
 
       (* Infer type of one pattern (see Pattern.t in Language.ml
-         Returns pair of Typing.t * ctx_layer' *)
+         Returns triple of Typing.t * Typing.t * ctx_layer'
+         Two typings represent lower bound and upper bound
+         ctx_layer is types inferred to free variables from upper bound context
+          *)
       let rec infer_pattern_type pattern =
         let empty_layer = Context.CtxLayer [] in
         match pattern with
-        | Pattern.Wildcard -> (TAny, empty_layer)
+        | Pattern.Wildcard -> (TAny, TAny, empty_layer)
         | Pattern.Sexp(name, patterns) -> let inferred_patterns = List.map infer_pattern_type patterns in
                                           let ctx_layer = List.fold_right (
-                                                fun (typing, Context.CtxLayer ctx_layer) acc ->
+                                                fun (_, _, Context.CtxLayer ctx_layer) acc ->
                                                   List.fold_right (fun (n, t) acc_in -> Context.extend_layer acc_in n t) ctx_layer acc
-                                          ) inferred_patterns empty_layer
-                                          in (TSexp (name, List.map fst inferred_patterns), ctx_layer)
+                                          ) inferred_patterns empty_layer in
+                                          let type_lb = TSexp (name, List.map (fun(lb, _ , _) -> lb) inferred_patterns) in
+                                          let type_ub = TSexp (name, List.map (fun(_ , ub, _) -> ub) inferred_patterns) in
+                                          (type_lb, type_ub, ctx_layer)
         | Pattern.Array(patterns)        -> let inferred_patterns = List.map infer_pattern_type patterns in
                                             let ctx_layer = List.fold_right (
-                                                fun (typing, Context.CtxLayer ctx_layer) acc ->
+                                                fun (_, _, Context.CtxLayer ctx_layer) acc ->
                                                   List.fold_right (fun (n, t) acc_in -> Context.extend_layer acc_in n t) ctx_layer acc
-                                            ) inferred_patterns empty_layer
-                                            in (TArr(union_contraction (TUnion (List.map fst inferred_patterns))), ctx_layer)
-        | Pattern.Named(name, pattern)   -> let (typing, ctx_layer) = infer_pattern_type pattern
-                                            in (typing, Context.extend_layer ctx_layer name typing)
-        | Pattern.Const(_)               -> (TConst, empty_layer)
-        | Pattern.String(_)              -> (TString, empty_layer)
-        | Pattern.Boxed                  -> (TAny, empty_layer) (* Should be smth like: TUnion [TString, TArray[TAny], TSexp("", ...)]
+                                            ) inferred_patterns empty_layer in
+                                            let type_lb = TArr(union_contraction (TUnion (List.map (fun(lb, _ , _) -> lb) inferred_patterns))) in
+                                            let type_ub = TArr(union_contraction (TUnion (List.map (fun(_ , ub, _) -> ub) inferred_patterns))) in
+                                            (type_lb, type_ub, ctx_layer)
+        | Pattern.Named(name, pattern)   -> let (typing_lb, typing_ub, ctx_layer) = infer_pattern_type pattern
+                                            in (typing_lb, typing_ub, Context.extend_layer ctx_layer name typing_ub)
+        | Pattern.Const(_)               -> (TVoid, TConst, empty_layer) (* Concrete const is between TVoid and TConst [read as covers nothing, but covered by TConst] *)
+        | Pattern.String(_)              -> (TVoid, TString, empty_layer) (* Concrete string is between TVoid and TString *)
+        | Pattern.Boxed                  -> (TUnion([TString; TArr TAny]), TAny, empty_layer)
+                                                     (* Should be smth like: TUnion [TString, TArray[TAny], TSexp("", ...)]
+                                                        Or, more precisely: TNot [TConst]
                                                         But we cannot express it right now.
                                                         The second option: typing like Not[TConst], but negative information
                                                         typing is even worse than introducing new constructors to data type *)
-        | Pattern.UnBoxed                -> (TConst, empty_layer) (* Straightforward by interpretation of pattern matching in Language.ml *)
-        | Pattern.StringTag              -> (TString, empty_layer)
-        | Pattern.SexpTag                -> (TAny, empty_layer) (* See Pattern.Boxed, same issue: cannot express all Sexprs right now *)
-        | Pattern.ArrayTag               -> (TArr TAny, empty_layer)
-        | Pattern.ClosureTag             -> (TAny, empty_layer) (* Should be smth like: TLambda(TVariadic, TAny)
+        | Pattern.UnBoxed                -> (TConst, TConst, empty_layer) (* Straightforward by interpretation of pattern matching in Language.ml *)
+        | Pattern.StringTag              -> (TString, TString, empty_layer)
+        | Pattern.SexpTag                -> (TVoid, TAny, empty_layer) (* See Pattern.Boxed, same issue: cannot express all Sexprs right now *)
+        | Pattern.ArrayTag               -> (TArr TAny, TArr TAny, empty_layer)
+        | Pattern.ClosureTag             -> (TVoid, TAny, empty_layer)
+                                                       (* Should be smth like: TLambda(TVariadic, TAny)
                                                           In addition it is a step forward for expressing Boxed type!
                                                           But TVariadic is hard to typecheck right now, we need to rewrite it *)
 
@@ -914,6 +924,7 @@ module Expr =
                                          TVoid, repacked_ast (* Assumed the result type of such cycles is empty *)
                                        else report_error ~loc:(Some l) (Printf.sprintf "loop condition should be \"%s\", but given type \"%s\"" (show(t) TConst) (show(t) t_cond))
             | Case(l, match_expr, branches, return_kind)
+            (* TODO fix test009 positive and negative examples *)
                                    -> let t_match_expr, e_match_expr = type_check_int ret_ht ctx match_expr in
                                    (* Then, we analyze each branch in imperative style. O(n^2) * O(Complexity of confomrs) *)
                                       let len = List.length branches in
@@ -921,26 +932,26 @@ module Expr =
                                       let returns = Array.make len (TAny, Const (l, 0)) in
                                       for i = 0 to len - 1 do
                                         let (pattern, implementation) = (List.nth branches i) in
-                                        let (pattern_type, ctx_layer) = infer_pattern_type pattern in
-                                        (* Check conformity with main pattern *)
-                                        if not (conforms pattern_type t_match_expr)
-                                        then Logger.add_warning ~loc:(Some l) "branch does not match anything (useless)"
+                                        let (pattern_type_lb, pattern_type_ub, ctx_layer) = infer_pattern_type pattern in
+                                        (* Check conformity with main pattern. Check that upper bound conforms supreme value type *)
+                                        if not (conforms pattern_type_ub t_match_expr)
+                                        then Logger.add_warning ~loc:(Some l) (Printf.sprintf "branch #%d does not match anything (useless)" (i + 1))
                                         else begin
                                           (* Then check conformity with upper patterns *)
                                           for j = 0 to i - 1 do
                                            (* see instance0012: subtyping is used when less specified type occurs below more specified: *)
-                                            if subtype pattern_type pattern_types.(j)
-                                            then Logger.add_warning ~loc:(Some l) "branch is unreachable (already covered)"
+                                            if subtype pattern_type_ub pattern_types.(j)
+                                            then Logger.add_warning ~loc:(Some l) (Printf.sprintf "branch #%d is unreachable (already covered)" (i + 1))
                                             else ();
                                           done;
-                                          (* We have useful branch here *)
-                                          pattern_types.(i) <- pattern_type;
+                                          (* We have useful branch here, save what types are actually branch is covering *)
+                                          pattern_types.(i) <- pattern_type_lb;
                                           returns.(i) <- type_check_int ret_ht (Context.expandWith ctx_layer ctx) implementation
                                         end
                                       done;
                                       (* Extra check that all branches have been covered *)
                                       let b_type = union_contraction (TUnion(Array.to_list pattern_types)) in
-                                        if not (subtype t_match_expr (b_type))
+                                        if not (subtype t_match_expr b_type)
                                         then Logger.add_warning ~loc:(Some l) (Printf.sprintf "branches \"%s\" do not cover target type \"%s\"" (show(Typing.t) b_type) (show(Typing.t) t_match_expr));
                                       let return_types, e_branches_impl = List.split (Array.to_list returns) in
                                       let e_branches = List.map2 (fun (pat, _) impl -> pat, impl) branches e_branches_impl in
@@ -998,7 +1009,7 @@ module Expr =
                                                                     else *)
                                                                     let typeToCheck = Option.value ~default:(Typing.TAny) optAncestorConcreteType in
                                                                     if not (conforms definitelyType typeToCheck)
-                                                                    then report_error ~loc:(Some l) ("Type usage confronts with declared interface")
+                                                                    then report_error ~loc:(Some l) ("Type usage is incompatible with previous type usage")
                                                                     else acc_ext, e_decls (* Drop declaration to avoid confusion *)
                                                       | Some def ->
                                                                     let t_def, e_def = type_check_int ret_ht exp_ctx def in

@@ -1,6 +1,5 @@
 -- checking matching of expressions
-fun asdf(x) {
-  x :: A(Int);
+fun asdf(x :: A(Int)) {
   case x of
     A (0) -> "1"
     -- | A (x) -> "2" -- Error: Branch is unreachable -- TODO false positive
