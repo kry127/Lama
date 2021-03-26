@@ -513,7 +513,7 @@ module Expr =
     (* BTW, great example of decoupling of modules Expr and Definition! decl defined with universal lables *)
     and decl = [`Local | `Public | `Extern | `PublicExtern ]
                  * Typing.t option
-                 * [`Fun of string list * t | `Variable of t option]
+                 * [`Fun of (string * Typing.t) list * t | `Variable of t option]
     with show, html
 
     let notRef = function Reff -> false | _ -> true
@@ -985,8 +985,7 @@ module Expr =
                                                       let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
                                                                         [type_body] (TypeHsh.to_seq_keys sub_ret_ht) in
                                                       let l_ret_type = union_contraction (TUnion(union_types)) in
-                                                       (* TODO think about inferring type for arguments! *)
-                                                      let inferred_type = TLambda (List.map (fun _ -> TAny) args, l_ret_type) in
+                                                      let inferred_type = TLambda (List.map snd args, l_ret_type) in
                                                       if not (conforms inferred_type exp_type)
                                                       then report_error ~loc:(Some(exprLoc expr)) (
                                                         Printf.sprintf "Function \"%s\" having type \"%s\" doesn't conforms declared type %s."
@@ -1109,7 +1108,7 @@ module Expr =
            List.fold_left
              (fun (vs, bd, bnd) -> function
               | (name, (_, _, `Variable value)) -> (name, Mut) :: vs, (match value with None -> bd | Some v -> Seq (l, Ignore (l, Assign (l, Ref(l, name), v)), bd)), bnd
-              | (name, (_, _, `Fun (args, b)))  -> (name, FVal) :: vs, bd, (name, Value.FunRef (name, args, b, 1 + State.level st)) :: bnd
+              | (name, (_, _, `Fun (args, b)))  -> (name, FVal) :: vs, bd, (name, Value.FunRef (name, List.map fst args, b, 1 + State.level st)) :: bnd
              )
              ([], body, [])
              (List.rev @@
@@ -1689,7 +1688,7 @@ module Definition =
   struct
 
     (* The type for a definition: either a function/infix, or a local variable *)
-    type t = string * Typing.t option * [`Fun of string list * Expr.t | `Variable of Expr.t option ]
+    type t = string * Typing.t option * [`Fun of (string * Typing.t) list * Expr.t | `Variable of Expr.t option ]
 
     let unopt_mod = function None -> `Local | Some m -> m
 
@@ -1736,7 +1735,7 @@ module Definition =
           locs:!(Util.list (local_var m infix)) next:";" {locs, infix}
      (* Use "useTypeParser" to parse type assignments *)
     |  name: LIDENT -"::" typ: !(Typing.typeParser) -";" {[(name, (`Local, Some typ, `Variable None))], infix}
-    | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[Pattern.parse] -")"
+    | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[ostap(!(Pattern.parse) (-"::" !(Typing.typeParser))?)] -")"
            -typ:(-"::" $ t:!(Typing.typeParser) {t})?
           (l:$ "{" body:exprScope[infix'][Expr.Weak] "}" {
             if flag && List.length args != 2 then report_error ~loc:(Some l#coord) "infix operator should accept two arguments";
@@ -1745,13 +1744,14 @@ module Definition =
             | _   -> ());
             let args, body =
               List.fold_right
-                (fun arg (args, body) ->
+                (fun (arg, argtypeOption) (args, body) ->
+                  let argtype = Option.value ~default:(Typing.TAny) argtypeOption in
                   match arg with
-                  | Pattern.Named (name, Pattern.Wildcard) -> name :: args, body
-                  | Pattern.Wildcard -> env#get_tmp :: args, body
+                  | Pattern.Named (name, Pattern.Wildcard) -> (name, argtype) :: args, body
+                  | Pattern.Wildcard -> (env#get_tmp, argtype) :: args, body
                   | p ->
                      let arg = env#get_tmp in
-                     arg :: args, Expr.Case (l#coord, Expr.Var(l#coord, arg), [p, body], Expr.Weak)
+                     (arg, argtype) :: args, Expr.Case (l#coord, Expr.Var(l#coord, arg), [p, body], Expr.Weak)
                 )
                 args
                 ([], body)
@@ -1760,9 +1760,10 @@ module Definition =
             [(name, (m, typ, `Fun (args, body)))], infix'
          } |
          l:$ ";" {
-            (* What is IT? *)
+           (* interpret none as TAny *)
+           let args = List.map (fun name, ttype -> name, Option.value ~default:(Typing.TAny) ttype) args in
             match m with
-            | `Extern -> [(name, (m, None, `Fun ((List.map (fun _ -> env#get_tmp) args), Expr.Skip l#coord)))], infix'
+            | `Extern -> [(name, (m, None, `Fun ((List.map (fun name, ttype -> env#get_tmp, ttype) args), Expr.Skip l#coord)))], infix'
             | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)
          })
     ) in parse

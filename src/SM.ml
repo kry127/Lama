@@ -635,11 +635,13 @@ object (self : 'self)
       scope = {scope with st = st'}
     >}
 
-  method add_lambda (args : string list) (body : Expr.t) =
+  method add_lambda (targs : (string * Typing.t) list) (body : Expr.t) =
+    let args = List.map fst targs in
     let name' = self#fun_internal_name (Printf.sprintf "lambda_%d" lam_index) in
     {< fundefs = add_fun fundefs (to_fundef name' args body scope.st); lam_index = lam_index + 1 >} # register_fun name', name'
       
-  method add_fun (name : string) (args : string list) (m : [`Local | `Extern | `Public | `PublicExtern]) (body : Expr.t) =
+  method add_fun (name : string) (targs : (string * Typing.t) list) (m : [`Local | `Extern | `Public | `PublicExtern]) (body : Expr.t) =
+    let args = List.map fst targs in
     let name' = self#fun_internal_name name in
     match m with
     | `Extern -> self
@@ -765,7 +767,7 @@ let compile cmd ((imports, infixes), p) =
   and compile_expr tail l env = function
   | Expr.Lambda (_, args, b, _) ->
      let env, lines = List.fold_left (fun (env, acc) (name, tt) -> let env, ln = env#gen_line name in env, acc @ ln) (env, []) args in
-     let env, name  = env#add_lambda (List.map fst args) b in
+     let env, name  = env#add_lambda args b in
      env#register_call name, false, lines @ [PROTO (name, env#current_function)] 
        
   | Expr.Scope (ll, ds, e)  ->
