@@ -1,0 +1,19 @@
+-- scope typing
+fun f(a) {
+  a.string
+}
+
+fun g(b) {
+  1 - b
+}
+-- scope 2
+{
+  f :: Double(Int) -> Str;
+  g :: ? -> Int;
+
+  f(Double(g(0))) -- назначили другие типы в другом скоупе
+  ;
+  {
+    f :: [Int] -> Str; -- should fail
+  }
+}
