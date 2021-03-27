@@ -2,7 +2,7 @@ local foo = fun (x :: A(Int)) {
   case x of
       A (0) -> "1"
   esac
-  -- Should give "not all branches covered" warning
+  -- TODO Should give "not all branches covered" warning
 };
 
-foo (A(1)) -- should fail
+foo (A(1)) -- would fail at runtime

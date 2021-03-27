@@ -1,0 +1,13 @@
+-- callable checking
+-- define successors
+succ :: Int -> Int;
+fun succ(x) { x + 1 }
+
+-- and function that accepts either type of successor
+fun succConsumer(succ) { fun dupsucc(x) { succ(succ(x)) } }
+
+{
+  succConsumer :: Int -> Int -> Int; -- wrong arrow associativity, should not typecheck
+  succConsumer(succ)
+};
+Unit

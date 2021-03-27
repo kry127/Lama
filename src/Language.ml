@@ -120,7 +120,11 @@ module Logger =
     let add_warning ?(loc=None) description = log#add_warning ~loc:(loc) description
     let add_error   ?(loc=None) description = log#add_error   ~loc:(loc) description
     let clear () = log#clear
-    let show () = show_t (log#get_log)
+    let show ?(lvl=0) () =
+       match lvl with
+       | 0 -> show_t (log#get_log)
+       | 1 -> show_t (List.filter (fun (i, _, _) -> match i with | `Warning | `Error -> true | _ -> false) log#get_log)
+       | 2 -> show_t (List.filter (fun (i, _, _) -> match i with | `Error            -> true | _ -> false) log#get_log)
   end
 
 @type k = Unmut | Mut | FVal with show, html
@@ -157,7 +161,7 @@ struct
    (* Answer: list0 also parses empty list :) *)
    ostap (
      (* Use "typeParser" to parse type information *)
-     typeParser: unionParser | arrowParser | sexpParser | arrayParser | anyParser;
+     typeParser: unionParser | arrowParser | sexpParser | arrayParser | anyParser | -"(" typeParser -")";
      anyParser: "?" {TAny};
      arrayParser: "[" inner:typeParser "]" {TArr (inner)};
      sexpParser: label: UIDENT maybeTypelist:(-"(" !(Util.list0)[typeParser] -")")? {
@@ -516,6 +520,8 @@ module Expr =
                  * [`Fun of (string * Typing.t) list * t | `Variable of t option]
     with show, html
 
+    let t_alias = t
+
     let notRef = function Reff -> false | _ -> true
     let isVoid = function Void | Weak -> true  | _ -> false
 
@@ -590,12 +596,15 @@ module Expr =
 
           let extend_layer, extend =
             (* Extend one context layer with the typing information: the [name] has the type [typing] *)
-            let extend_layer ctx_layer name typing
+            let extend_layer ?(soft=false) ctx_layer name typing
               = match ctx_layer with
-                | CtxLayer ctx_layer ->
-                  match List.find_opt (fun (pname, _) -> String.equal pname name) ctx_layer with
-                  | None               -> CtxLayer (List.cons (name, typing) ctx_layer) (* Successfully added type to scope *)
-                  | Some typing -> report_error ~loc:(Loc.get name) ("redefinition of typing for " ^ name ^ " in the same scope")
+                | CtxLayer ctx_layer_w ->
+                  match List.find_opt (fun (pname, _) -> String.equal pname name) ctx_layer_w with
+                  | None               -> CtxLayer (List.cons (name, typing) ctx_layer_w) (* Successfully added type to scope *)
+                  | Some typing ->
+                    if soft
+                    then ctx_layer
+                    else report_error ~loc:(Loc.get name) ("redefinition of typing for " ^ name ^ " in the same scope")
             in
             (* Extend current typing scope with the typing information: the [name] has the type [typing] *)
             let extend ctx name typing
@@ -794,9 +803,10 @@ module Expr =
       let genCast ?(desc="") l e actT expT =
         Cast (l, e, expT, Printf.sprintf "%s (\"%s\" => \"%s\")" desc (show(t) actT) (show(t) expT), true)
 
-      let type_check ctx defs expr =
+      let type_check ctx expr =
         let rec type_check_int ret_ht ctx expr
           =
+            (* Logger.add_warning ~loc:(Some (exprLoc expr)) (Printf.sprintf "TYPING EXPR=%s\nIN CONTEXT=%s" (show(t_alias) expr) (show(Context.t) ctx)); *)
             match expr with
             | Cast(_, _, t, _, _)      -> t, expr (* Trivial rule, but does it preserve soundness? *)
             | Const _                  -> TConst, expr
@@ -805,19 +815,21 @@ module Expr =
             | String _                 -> TString, expr
             | Sexp (l, name, subexprs) -> let types, exprs = List.split ( List.map (fun exp -> type_check_int ret_ht ctx exp) subexprs) in
                                           TSexp(name, types), Sexp(l, name, exprs)
-            | Var   (_, name)            -> Option.value ~default:TAny (Context.get_type ctx name), expr
-            | Ref   (_, name)            -> TRef (Option.value ~default:TAny (Context.get_type ctx name)), expr
+            | Var   (l, name)          -> let res = Option.value ~default:TAny (Context.get_type ctx name) in
+                                          (* Logger.add_warning ~loc:(Some l) (Printf.sprintf "Searching type for name \"%s\", found \"%s\"" name (show(t) res)); *)
+                                          res, expr
+            | Ref   (_, name)          -> TRef (Option.value ~default:TAny (Context.get_type ctx name)), expr
             | Binop (l, op, exp1, exp2)-> let t1, e1 = type_check_int ret_ht ctx exp1 in
-                                       let t2, e2 = type_check_int ret_ht ctx exp2 in
-                                       if not (conforms t1 TConst)
-                                       then report_error ~loc:(Some l) @@ Printf.sprintf "left binary operand of type \"%s\" does not conforms to TConst" (show(t) t1)
-                                       else if not (conforms t2 TConst)
-                                       then report_error ~loc:(Some l) @@ Printf.sprintf "right binary operand of type \"%s\" does not conforms to TConst" (show(t) t2)
-                                       else
-                                         (* Already checked conformity, so we can safely match with 'Some' value *)
-                                         let cst_e1 = genCast ~desc:"left operand cast fail" l e1 t1 TConst in
-                                         let cst_e2 = genCast ~desc:"right operand cast fail"l e2 t2 TConst in
-                                         TConst, Binop(l, op, cst_e1, cst_e2)
+                                          let t2, e2 = type_check_int ret_ht ctx exp2 in
+                                          if not (conforms t1 TConst)
+                                          then report_error ~loc:(Some l) @@ Printf.sprintf "left binary operand of type \"%s\" does not conforms to TConst" (show(t) t1)
+                                          else if not (conforms t2 TConst)
+                                          then report_error ~loc:(Some l) @@ Printf.sprintf "right binary operand of type \"%s\" does not conforms to TConst" (show(t) t2)
+                                          else
+                                          (* Already checked conformity, so we can safely match with 'Some' value *)
+                                          let cst_e1 = genCast ~desc:"left operand cast fail" l e1 t1 TConst in
+                                          let cst_e2 = genCast ~desc:"right operand cast fail"l e2 t2 TConst in
+                                          TConst, Binop(l, op, cst_e1, cst_e2)
             | ElemRef (l, arr, index) (* Both value and reference versions are typed the same way... *)
             | Elem (l, arr, index)     -> let t_arr, e_arr     = type_check_int ret_ht ctx arr   in
                                        let t_index, e_index = type_check_int ret_ht ctx index in
@@ -907,7 +919,7 @@ module Expr =
                                        let t_rbr,  e_rbr  = type_check_int ret_ht ctx rbr  in
                                        if conforms t_cond TConst
                                        then
-                                         let e_cond_cst = genCast ~desc:"if condition didn't evaluate to boolean" l e_cond t_cond TConst in
+                                         let e_cond_cst = genCast ~desc:"if condition didn't evaluate to boolean" (exprLoc cond) e_cond t_cond TConst in
                                          union_contraction (TUnion(t_lbr :: t_rbr :: []))
                                          , If(l, e_cond_cst, e_lbr, e_rbr)
                                        else report_error ~loc:(Some l) (Printf.sprintf "if condition should be \"%s\", but given type \"%s\"" (show(t) TConst) (show(t) t_cond))
@@ -916,7 +928,7 @@ module Expr =
                                        let t_body, e_body = type_check_int ret_ht ctx body in
                                        if conforms t_cond TConst
                                        then
-                                         let e_cond_cst = genCast ~desc:"cycle condition didn't evaluate to boolean" l e_cond t_cond TConst in
+                                         let e_cond_cst = genCast ~desc:"cycle condition didn't evaluate to boolean" (exprLoc cond) e_cond t_cond TConst in
                                          let repacked_ast = match expr with
                                          | While (ll, cond, body) -> While (ll, e_cond_cst, e_body)
                                          | Repeat(ll, body, cond) -> Repeat(ll, e_body, e_cond_cst)
@@ -924,7 +936,6 @@ module Expr =
                                          TVoid, repacked_ast (* Assumed the result type of such cycles is empty *)
                                        else report_error ~loc:(Some l) (Printf.sprintf "loop condition should be \"%s\", but given type \"%s\"" (show(t) TConst) (show(t) t_cond))
             | Case(l, match_expr, branches, return_kind)
-            (* TODO fix test009 positive and negative examples *)
                                    -> let t_match_expr, e_match_expr = type_check_int ret_ht ctx match_expr in
                                    (* Then, we analyze each branch in imperative style. O(n^2) * O(Complexity of confomrs) *)
                                       let len = List.length branches in
@@ -992,10 +1003,11 @@ module Expr =
                                                         name (show(Typing.t) inferred_type) (show(Typing.t) exp_type)
                                                       )
                                                       else
-                                                      acc_ext, (match maybeType with
-                                                       | Some t -> (name, (ldef, Some t,`Fun (args, e_body))) :: e_decls
+                                                      (match maybeType with
+                                                       | Some t -> acc_ext, (name, (ldef, Some t,`Fun (args, e_body))) :: e_decls
                                                        (* if maybeType is none, we can infer type! *)
-                                                       | None   -> (name, (ldef, Some inferred_type,`Fun (args, e_body))) :: e_decls
+                                                       | None   -> Context.extend_layer ~soft:true acc_ext name inferred_type,
+                                                                   (name, (ldef, Some inferred_type,`Fun (args, e_body))) :: e_decls
                                                       )
                                              | (ldef, maybeType,`Variable (maybe_def))
                                                    -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
@@ -1018,11 +1030,12 @@ module Expr =
                                                                          name (show(Typing.t) t_def) (show(Typing.t) exp_type)
                                                                        );
                                                                     (* Do not forget to update declaration *)
-                                                                    acc_ext, (match maybeType with
-                                                                              | Some t -> (name, (ldef, Some t,`Variable (Some (e_def)))) :: e_decls
-                                                                              (* if maybeType is none, we can infer type! *)
-                                                                              | None   -> (name, (ldef, Some t_def, `Variable (Some (e_def)))) :: e_decls
-                                                                             )
+                                                                    (match maybeType with
+                                                                     | Some t -> acc_ext, (name, (ldef, Some t,`Variable (Some (e_def)))) :: e_decls
+                                                                     (* if maybeType is none, we can infer type! *)
+                                                                     | None   -> Context.extend_layer ~soft:true acc_ext name t_def,
+                                                                                 (name, (ldef, Some t_def, `Variable (Some (e_def)))) :: e_decls
+                                                                    )
                                                       )
                                            ) ((Context.CtxLayer []), []) decls in
                                        let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
@@ -1046,7 +1059,7 @@ module Expr =
 
       (* Top level typechecker *)
       let typecheck ast =
-        let new_type, new_ast = type_check Context.ZeroCtx Context.ZeroCtx ast
+        let new_type, new_ast = type_check Context.ZeroCtx ast
         in (new_type, new_ast)
 
     end
@@ -1141,13 +1154,8 @@ module Expr =
          in
          eval (st, i, o, v :: vs) (Skip l) k
       | Cast (l, e, tt, label, positive) ->
-           let inferedType, newExpr = Typecheck.typecheck e in
            let posAsStr = if positive then "+" else "-" in
-           if not (Typecheck.Conformity.conforms inferedType tt)
-           then (
-             report_error ~loc:(Some l) (Printf.sprintf "[SHOULD NEVER HAPPEN] Static cast%s failed at runtime: \"%s\"" posAsStr label)
-           )
-           else eval conf k (schedule_list [newExpr; Intrinsic (l, fun (st, i, o, s::vs) ->
+           eval conf k (schedule_list [e; Intrinsic (l, fun (st, i, o, s::vs) ->
                if not (Typecheck.Conformity.value_conforms s tt)
                then report_error ~loc:(Some l) (Printf.sprintf "Cast%s failed for value=\"%s\"\n %s"
                                                 posAsStr

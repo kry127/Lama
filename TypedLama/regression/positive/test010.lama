@@ -1,0 +1,25 @@
+-- callable checking
+-- define two sort of successors
+succ :: Int -> Int;
+fun succ(x) { x + 1 }
+
+succDyn :: ? -> Int;
+fun succDyn(x) { x + 1 }
+
+-- and function that accepts either type of successor
+fun succConsumer(succ) { fun dupsucc(x) { succ(succ(x)) } }
+
+local x = read(); -- read either false (0) or true
+{
+  succConsumer :: Union[Int -> Int, ? -> Int] -> Int;
+  succConsumer(if x then succ else succDyn fi) -- should type check
+};
+{
+  succConsumer :: (Union[Int, ?] -> Int) -> Int;
+  succConsumer(if x then succ else succDyn fi) -- should type check
+};
+{
+  succConsumer :: Union[(Int -> Int) -> Int, (? -> Int) -> Int];
+  succConsumer(if x then succ else succDyn fi) -- should type check
+};
+Unit

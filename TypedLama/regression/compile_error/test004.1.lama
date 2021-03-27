@@ -1,0 +1,5 @@
+-- check that logical value should be TConst
+if A(1)
+then "lol"
+else "kek"
+fi

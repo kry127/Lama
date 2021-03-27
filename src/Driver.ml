@@ -184,33 +184,32 @@ class options args =
       debug := true     
   end
 
-let checkLoggerIfError = fun () ->
-    if Language.Logger.has_errors ()
-    then (Printf.eprintf "Errors occured!\n%s\n" (Language.Logger.show ()); exit 255)
-    
-let outputWarnings = fun() ->
-    if Language.Logger.has_warnings ()
-    then Printf.eprintf "Warnings occured!\n%s\n" (Language.Logger.show ())
-
-let outputInfos = fun() ->
-    if Language.Logger.has_infos ()
-    then Printf.eprintf "%s\n" (Language.Logger.show ())
 
 let typecheckWrapper ((imports, infixes), untypedAst) =
     let typeOfAst, astWithCasts = Language.Expr.Typecheck.typecheck untypedAst in
     ((imports, infixes), astWithCasts)
-  
+
+let outputLog lvl = Printf.eprintf "%s\n" (Language.Logger.show ~lvl:lvl ())
+
+let checkLoggerIfError = fun () ->
+    if Language.Logger.has_errors ()
+    then begin
+      outputLog 0;
+      exit 255
+    end
+
 let main =
   try 
     let cmd = new options Sys.argv in
     cmd#greet;
-    Language.Logger.clear; (* Initialize logger for collecting messages *)
+    Language.Logger.clear (); (* Initialize logger for collecting messages *)
     let parseResult = try parse cmd with Language.Semantic_error msg -> `Fail msg in
     match parseResult with
     | `Ok untyped_prog ->
        checkLoggerIfError (); (* If errors occured, tear down *)
        let prog = if cmd#get_typecheck then typecheckWrapper untyped_prog else untyped_prog in
        checkLoggerIfError();
+       (* outputLog 0; *) (* for debug *)
        cmd#dump_AST (snd prog);
        (match cmd#get_mode with
         | `Default | `Compile ->
@@ -233,9 +232,8 @@ let main =
        checkLoggerIfError ();
 	   List.iter (fun i -> Printf.printf "%d\n" i) output 
        );
-       outputWarnings (); (* At last, output warnings if any *)
-       outputInfos () (* Print out infos too *)
-    | `Fail er -> Printf.eprintf "Fatal error: %s\n" er; exit 255
+       Language.Logger.show ~lvl:0 () (* At last, output warnings if any *)
+    | `Fail er -> Printf.eprintf "Error: %s\n" er; outputLog 0; exit 255
   with
-  | Language.Semantic_error msg -> Printf.printf "Error: %s\n" msg; exit 255 
+  | Language.Semantic_error msg -> Printf.printf "Error: %s\n" msg; outputLog 0; exit 255
   | Commandline_error msg -> Printf.printf "%s\n" msg; exit 255

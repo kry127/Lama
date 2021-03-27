@@ -1,0 +1,8 @@
+-- check that logical value should be TConst
+fun P(i :: Int) :: Str {
+  i.string
+}
+for i := 0, P(i), i := i+1
+do
+
+od;

@@ -1,0 +1,6 @@
+-- check that logical value should be TConst
+local i = 0, x = A(i);
+while x do
+  i := i + 1;
+  x := A(i)
+od
