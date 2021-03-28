@@ -11,15 +11,15 @@ fun succConsumer(succ) { fun dupsucc(x) { succ(succ(x)) } }
 
 local x = read(); -- read either false (0) or true
 {
-  succConsumer :: Union[Int -> Int, ? -> Int] -> Int;
+  succConsumer :: Union[Int -> Int; ? -> Int] -> Int;
   succConsumer(if x then succ else succDyn fi) -- should type check
 };
 {
-  succConsumer :: (Union[Int, ?] -> Int) -> Int;
+  succConsumer :: (Union[Int; ?] -> Int) -> Int;
   succConsumer(if x then succ else succDyn fi) -- should type check
 };
 {
-  succConsumer :: Union[(Int -> Int) -> Int, (? -> Int) -> Int];
+  succConsumer :: Union[(Int -> Int) -> Int; (? -> Int) -> Int];
   succConsumer(if x then succ else succDyn fi) -- should type check
 };
 Unit

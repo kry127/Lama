@@ -1,22 +1,22 @@
 -- check parsing of union and arrows
-local x :: Union[Int, Union[Str, Int]] = 1;
-local z :: Union[Int, Str] -> Union[Str, Int];
-local y :: Union[Int -> Str, Str -> Int];
+local x :: Union[Int; Union[Str; Int]] = 1;
+local z :: Union[Int; Str] -> Union[Str; Int];
+local y :: Union[Int -> Str; Str -> Int];
 
 -- check parsing of arrays
 local arr1 :: [?];
-local arr2 :: [Union[Str, Int]];
-local arr3 :: Union[[Str], [Int], [Str] -> [Int]];
+local arr2 :: [Union[Str; Int]];
+local arr3 :: Union[[Str]; [Int]; [Str] -> [Int]];
 local arr4 :: [Int] = [1, 4, 6, 2, 6, 2, 5, 6, 3];
 local arr5 :: [Str] = ["here", "is", "JOHNNY"];
 
 -- sexpressions
 local sexp1 :: X;
 local sexp2 :: Y(?, Str, Whois(Str)) = Y(Combinator, "xyzzy", Whois("Yandex"));
-local sexp3 :: Union[X, X()] = X; -- This is the same types, here is check
+local sexp3 :: Union[X; X()] = X; -- This is the same types, here is check
 local sexp3_checker :: X -> Void = fun (x) { return };
 local sexp3_ok = sexp3_checker (sexp3); -- checks union contraction
-local sexp4 :: Union[Str, Str()]; -- Str is string, Str() is Sexp
+local sexp4 :: Union[Str; Str()]; -- Str is string, Str() is Sexp
 
 
 -- functions
@@ -32,6 +32,6 @@ local f3 = eta f1; -- obviously, f3 has type () -> Int -> Int, but should lamac 
 
 -- unions
 local dyn1 :: ? = X; -- move Y to untyped part of code
-local union :: Union[X, Y, Z] = Y;
+local union :: Union[X; Y; Z] = Y;
 union := dyn1; -- dynamic cast should not fail
 Unit

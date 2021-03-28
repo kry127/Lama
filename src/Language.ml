@@ -177,7 +177,7 @@ struct
      arrowParser:
          premise:!(Util.listBy)[ostap(",")][typeParser] "->" conclusion:typeParser { TLambda (premise, conclusion) }
        |                                            "()" "->" conclusion:typeParser { TLambda ([]     , conclusion) };
-     unionParser: "Union" "[" typelist:!(Util.listBy)[ostap(",")][typeParser] "]" {TUnion typelist}
+     unionParser: "Union" "[" typelist:!(Util.listBy)[ostap(";")][typeParser] "]" {TUnion typelist}
    )
 
    let etaExpand _type = match _type with
@@ -685,7 +685,7 @@ module Expr =
                                                                   && List.length types_l = List.length types_r
                                                                   && List.compare_lengths types_l types_r == 0
                                                                   && List.for_all2 conforms types_l types_r
-            (* Note: right now implemented as CONTRAVARIANT by the arguments *)
+            (* Note: CONTRAVARIANT by the arguments *)
             | (TLambda(args_l, body_l), TLambda(args_r, body_r)) ->
                           List.compare_lengths args_l args_r == 0
                        && List.for_all2 conforms args_r args_l
@@ -733,14 +733,15 @@ module Expr =
             let rec union_contraction_pass res types = match types with
               | t :: ts -> if t = TAny
                            then [TAny]
+                           else if t = TVoid then union_contraction_pass res ts
                            else if List.exists (subtype t) ts then union_contraction_pass res ts (* we also should check in reverse, so there is two passes *)
                            else if List.exists (subtype t) res then union_contraction_pass res ts
                            else union_contraction_pass (t :: res) ts
               | []      -> res
             in match utype with
             | TUnion (tts) -> let ttsnew = union_contraction_pass [] (union_contraction_pass [] tts) in (* make two passes *)
-                              if List.length ttsnew == 1
-                              then List.nth ttsnew 0
+                              if List.length ttsnew == 1 then List.nth ttsnew 0
+                              else if List.length ttsnew == 0 then TVoid (* Union of empty list is void type *)
                               else TUnion(ttsnew)
             | _            -> report_error("Union contraction expects TUnion")
 
@@ -1018,9 +1019,10 @@ module Expr =
                                                                     (* if Option.is_none optAncestorConcreteType
                                                                     then report_error ~loc:(Some l) (Printf.sprintf "Cannot find root type of variable \"%s\"" name)
                                                                     else *)
-                                                                    let typeToCheck = Option.value ~default:(Typing.TAny) optAncestorConcreteType in
-                                                                    if not (conforms definitelyType typeToCheck)
-                                                                    then report_error ~loc:(Some l) ("Type usage is incompatible with previous type usage")
+                                                                    let ancestorConcreteType = Option.value ~default:(Typing.TAny) optAncestorConcreteType in
+                                                                    if not (conforms definitelyType ancestorConcreteType)
+                                                                    then report_error ~loc:(Some l)
+                                                                        (Printf.sprintf "Type usage is incompatible with previous type usage: \"%s\" => \"%s\"" (show(t) ancestorConcreteType) (show(t) definitelyType) )
                                                                     else acc_ext, e_decls (* Drop declaration to avoid confusion *)
                                                       | Some def ->
                                                                     let t_def, e_def = type_check_int ret_ht exp_ctx def in

@@ -7,8 +7,8 @@ fun processA(x :: A(Int)) {
 }
 
 fun len(x) {
-  -- @x(t) :: Union [Nil, Cons(t, x)]; -- хочется задавать рекурсивные типы примерно так, но пока что их нет
-  x :: Union [Nil, Cons(?, ?)];
+  -- @x(t) :: Union [Nil; Cons(t, x)]; -- хочется задавать рекурсивные типы примерно так, но пока что их нет
+  x :: Union [Nil; Cons(?, ?)];
   case x of
      Nil -> 0
    | Cons (_, xs) -> len(xs)
