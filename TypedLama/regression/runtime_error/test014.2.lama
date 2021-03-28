@@ -1,0 +1,15 @@
+-- testing HOF (or functions in negative position)
+
+public fun foldl (f :: (Int, ?) -> ?, acc, l :: Union[Cons(?, ?); Nil]) {
+  case l of
+    Nil         -> acc
+  | Cons(x, xs) -> foldl (f, f (acc, x), xs)
+  esac
+}
+
+-- let's fail contract with passing wrong initial accumulator
+-- the difference between this and test014.1.lama is whom to blame! :)
+-- In this case, `f` in foldl has more type information, so the context is blamed (which is Wrong)
+local simpleSummer = fun (sum :: Int, elm :: Int) { sum + elm };
+foldl(simpleSummer, Wrong, Cons(1, Cons(2, Cons(3, Nil))));
+Unit

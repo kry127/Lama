@@ -1,0 +1,16 @@
+-- testing HOF (or functions in negative position)
+
+-- this is foldl from List lama module, but typed and expressed in terms of 'Cons' and 'Nil'
+-- because sad, but:
+--  type system is not polymorphic yet
+--  type system does not provide recursive definitions (mu types)
+public fun foldl (f :: (?, ?) -> ?, acc, l :: Union[Cons(?, ?); Nil]) {
+  case l of
+    Nil         -> acc
+  | Cons(x, xs) -> foldl (f, f (acc, x), xs)
+  esac
+}
+
+local simpleSummer = fun (sum :: Int, elm :: Int) { sum + elm };
+foldl(simpleSummer, 0, Cons(1, Cons(2, Cons(3, Nil))));
+Unit
