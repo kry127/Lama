@@ -1,0 +1,6 @@
+-- check static type conformity of functions
+-- OK function:
+f :: (Int, A, B) -> Str;
+fun f(i, a, b) {
+  "kek"
+}

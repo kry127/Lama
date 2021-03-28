@@ -1,0 +1,6 @@
+-- check static type conformity of functions
+-- wrong return type of the body
+wrong_body_type :: (Int, A, B) -> Str;
+fun wrong_body_type(i, a, b) {
+  Wrong(i)
+}

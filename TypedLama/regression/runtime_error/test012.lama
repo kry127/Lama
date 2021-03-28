@@ -1,24 +1,19 @@
 -- допустим есть несколько объектов неизвестного типа ?
 local a :: ? = A(3, "three"); -- S-выражение A от числа и строки
-local b :: ? = fun(t) { 4 };  -- замыкание, возвращающее четвёрку и игнорирующее входной аргумент
+local b :: ? = fun(t) { 4 };  -- замыкание, возвращающее число и игнорирующее входной аргумент
 local c :: ? = 35;            -- число
 
 
 {
   -- пусть мы хотим в рантайме проверять использование объектом типа подобного вида
-  obj :: Union[A(Int, Str), B(C, Int) ~> Str];
+  obj :: Union[A(Int, Str); B(C, Int) -> Str];
   local obj;
 
   -- оба присвоения должны проверять в рантайме, что мы присваиваем объект правильного типа
-  printf("a");
   obj := a;
-  printf(" -- ok\n");
   printf("b");
-  obj := b; -- TODO issue, this dynamic cast is successful when b is arbitrary function
-  printf(" -- ok\n");
-  printf("c");
-  obj := c; -- Runtime error
-  printf(" -- ok\n");
+  obj := b; -- TODO ok, but think about real execution of obj!
+  obj := c; -- Runtime error, "C’est la vie"
   Unit
 };
 Unit

@@ -1,0 +1,6 @@
+-- check static type conformity of functions
+-- less arguments than declared in type:
+less_args :: (Int, A, B) -> Str;
+fun less_args(i, a) {
+  "kek"
+}

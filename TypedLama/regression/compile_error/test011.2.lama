@@ -1,0 +1,6 @@
+-- check static type conformity of functions
+-- declared more arguments than in type declaration
+more_args :: (Int, A, B) -> Str;
+fun more_args(i, a, b, c) {
+  "kek"
+}

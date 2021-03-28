@@ -1,0 +1,6 @@
+-- check static type conformity of functions
+-- both arity and return type mismatch
+wrong_arrow :: (Int, A) -> B -> Str;
+fun wrong_arrow(i, a, b) {
+  "kek"
+}
