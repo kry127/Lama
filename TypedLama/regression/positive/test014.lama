@@ -12,5 +12,5 @@ public fun foldl (f :: (?, ?) -> ?, acc, l :: Union[Cons(?, ?); Nil]) {
 }
 
 local simpleSummer = fun (sum :: Int, elm :: Int) { sum + elm };
-foldl(simpleSummer, 0, Cons(1, Cons(2, Cons(3, Nil))));
+write(foldl(simpleSummer, 0, Cons(1, Cons(2, Cons(3, Nil)))));
 Unit

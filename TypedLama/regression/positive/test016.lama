@@ -10,4 +10,5 @@ fun intStringer(x :: Int) {
 -- declare some dynamic variable:
 local dyn :: ? = "This Chad can be anything he wants";
 dyn := intStringer; -- TODO make cast not only expression class, but rather value class, see next line
-dyn("lel") -- normally, cast would fail, but now...
+dyn("lel"); -- normally, cast would fail, but now...
+intStringer("lel")

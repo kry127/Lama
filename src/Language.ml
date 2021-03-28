@@ -109,7 +109,7 @@ module Logger =
         end;;
 
     let log = new logclass
-    let get_log ()      = log#get_log
+    let get_log ()      = List.rev log#get_log
     let has_infos ()    = log#has_infos
     let has_warnings () = log#has_warnings
     let has_errors ()   = log#has_errors
@@ -122,9 +122,9 @@ module Logger =
     let clear () = log#clear
     let show ?(lvl=0) () =
        match lvl with
-       | 0 -> show_t (log#get_log)
-       | 1 -> show_t (List.filter (fun (i, _, _) -> match i with | `Warning | `Error -> true | _ -> false) log#get_log)
-       | 2 -> show_t (List.filter (fun (i, _, _) -> match i with | `Error            -> true | _ -> false) log#get_log)
+       | 0 -> show_t (get_log ())
+       | 1 -> show_t (List.filter (fun (i, _, _) -> match i with | `Warning | `Error -> true | _ -> false) (get_log ()))
+       | 2 -> show_t (List.filter (fun (i, _, _) -> match i with | `Error            -> true | _ -> false) (get_log ()))
   end
 
 @type k = Unmut | Mut | FVal with show, html
@@ -223,7 +223,7 @@ module Value =
     | Closure of string list * 'a * 'b
     | FunRef  of string * string list * 'a * int
     | Builtin of string
-    (* | Cast    of ('a, 'b) t * Typing.t * string * bool *)
+    | Cast    of Loc.t * ('a, 'b) t * Typing.t * string * bool
     with show, html
 
     let is_int = function Int _ -> true | _ -> false
@@ -284,7 +284,6 @@ module Value =
       in
       inner v;
       Bytes.of_string @@ Buffer.contents buf
-
   end
 
 (* Builtins *)
@@ -1087,6 +1086,23 @@ module Expr =
 
     end
 
+
+    (* Evaluator helper: check top stack value conforms cast type tt *)
+    let check_cast_runtime ((st, i, o, s::vs) as conf) loc tt label positive =
+      let posAsStr = if positive then "+" else "-" in
+      if not (Typecheck.Conformity.value_conforms s tt)
+      then report_error ~loc:(Some loc) (Printf.sprintf "Cast%s failed for value=\"%s\"\n %s"
+                                         posAsStr
+                                         (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") s)
+                                         label)
+      else
+      let valOnStack = match s with
+      (* We cannot fully verify closures (arrows) without actual code execution, so we should leave a cast as a value *)
+      | Value.Closure _ -> if tt == TAny then s else Value.Cast(loc, s, tt, label, positive)
+      | s               -> s(* otherwise act like nothing happened *)
+      in
+      (st, i, o, valOnStack::vs)
+
     (* Expression evaluator
 
           val eval : env -> config -> k -> t -> config
@@ -1132,9 +1148,9 @@ module Expr =
     let rec eval ((st, i, o, vs) as conf) k expr =
       (* Logger.add_info (Printf.sprintf "Evaluating expression \"%s\"" (show(t) expr)); *)
       let print_values vs =
-        Printf.eprintf "Values:\n%!";
-        List.iter (fun v -> Printf.eprintf "%s\n%!" @@ show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") v) vs;
-        Printf.eprintf "End Values\n%!"
+        Logger.add_info "Values:";
+        List.iter (fun v -> Logger.add_info (Printf.sprintf "%s" @@ show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") v)) vs;
+        Logger.add_info "End Values"
       in
       match expr with
       | Lambda (l, args, body, _) ->
@@ -1177,15 +1193,8 @@ module Expr =
          in
          eval (st, i, o, v :: vs) (Skip l) k
       | Cast (l, e, tt, label, positive) ->
-           let posAsStr = if positive then "+" else "-" in
-           eval conf k (schedule_list [e; Intrinsic (l, fun (st, i, o, s::vs) ->
-               if not (Typecheck.Conformity.value_conforms s tt)
-               then report_error ~loc:(Some l) (Printf.sprintf "Cast%s failed for value=\"%s\"\n %s"
-                                                posAsStr
-                                                (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") s)
-                                                label)
-               else (st, i, o, s::vs) (* act like nothing happened *)
-           )])
+        let posAsStr = if positive then "+" else "-" in
+        eval conf k (schedule_list [e; Intrinsic (l, fun conf -> check_cast_runtime conf l tt label positive)])
       | Ref (l, x) ->
          eval (st, i, o, (Value.Var (Value.Global x)) :: vs) (Skip l) k (* only Value.Global is supported in interpretation *)
       | Array (l, xs) ->
@@ -1201,29 +1210,38 @@ module Expr =
       | Length (l, e) ->
          eval conf k (schedule_list [e; Intrinsic (l, fun (st, i, o, v::vs) -> Builtin.eval (st, i, o, vs) [v] ".length")])
       | Call (l, f, args) -> (
-         match f with
-         | Cast(l, f, t, msg, polarity) -> (match t with
-           | TAny -> eval conf k (Call(l, f, args))
-           | TLambda(t_args, t_body) ->
-               let negPosition = try List.map2 (fun arg targ -> Cast(l, arg, targ, msg, not polarity)) args t_args
-                                 with Invalid_argument(_) -> report_error ~loc:(Some l) ("arguments more than expected type of function call")
-               in eval conf k (Cast(l, Call(l, f, negPosition), t_body, msg, polarity))
-           | _ -> report_error ~loc:(Some l) "attempt to call object casted to non-function type"
-         )
-         | _ ->
-             eval conf k (schedule_list (f :: args @ [Intrinsic (l, fun (st, i, o, vs) ->
-                  let es, vs' = take (List.length args + 1) vs in
-                  let f :: es = List.rev es in
-                  (match f with
-                   | Value.Builtin name ->
-                      Builtin.eval (st, i, o, vs') es name
-                   | Value.Closure (args, body, closure) ->
-                      let st' = State.push (State.leave st closure.(0)) (State.from_list @@ List.combine args es) (List.map (fun x -> x, Mut) args) in
-                      let st'', i', o', vs'' = eval (st', i, o, []) (Skip l) body in
-                      closure.(0) <- st'';
-                      (State.leave st'' st, i', o', match vs'' with [v] -> v::vs' | _ -> Value.Empty :: vs')
-                   | _ -> report_error ~loc:(Some l) (Printf.sprintf "callee did not evaluate to a function: \"%s\"" (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") f))
-                  ))]))
+            let rec fun_intrinsic = fun (st, i, o, vs) ->
+                let es, vs' = take (List.length args + 1) vs in
+                let f :: es = List.rev es in
+                (match f with
+                 | Value.Builtin name ->
+                    Builtin.eval (st, i, o, vs') es name
+                 | Value.Closure (args, body, closure) ->
+                    let st' = State.push (State.leave st closure.(0)) (State.from_list @@ List.combine args es) (List.map (fun x -> x, Mut) args) in
+                    let st'', i', o', vs'' = eval (st', i, o, []) (Skip l) body in
+                    closure.(0) <- st'';
+                    (State.leave st'' st, i', o', match vs'' with [v] -> v::vs' | _ -> Value.Empty :: vs')
+                 | Value.Cast (loc, v, tt, label, polarity) ->
+                    let targs, tbody = (match tt with
+                      | TLambda(targs, tbody) -> targs, tbody
+                      | _ -> report_error ~loc:(Some l) (Printf.sprintf "attempt to call object casted to type \"%s\"" (Typing.printType tt))
+                    ) in
+                    (* take values from stack and cast them with label negation *)
+                    let arg_recalculation = List.map (fun esv, targ ->
+                        fun (st, i, o, vs) -> check_cast_runtime (st, i, o, esv :: vs) l targ label (not polarity)
+                    ) (List.combine es targs) in
+                    (* cast result to proper type *)
+                    let final_cast = (fun ((st, i, o, vs) as conf) ->
+                                    check_cast_runtime conf l tbody label polarity
+                    ) in
+                    let funchain = fun conf -> List.fold_left (fun s f -> f(s)) conf (arg_recalculation @ [fun_intrinsic; final_cast]) in
+                    (* put wrapped value v on stack instead of f, recalculate arguments, and then add final cast of result type with intrinsic *)
+                    (* funchain (st, i, o, v :: vs') *) (* The state transits all listed above operations *)
+                    eval (st, i, o, v :: vs') (Skip l) (Intrinsic (l, funchain)) (* The same, but with explicit ignore of k *)
+                 | _ -> report_error ~loc:(Some l) (Printf.sprintf "callee did not evaluate to a function: \"%s\"" (show(Value.t) (fun _ -> "<expr>") (fun _ -> "<state>") f))
+                )
+             in
+             eval conf k (schedule_list (f :: args @ [Intrinsic (l, fun_intrinsic)]))
         )
       | Leave l  -> eval (State.drop st, i, o, vs) (Skip l) k
       | Assign (l, x, e)  ->
