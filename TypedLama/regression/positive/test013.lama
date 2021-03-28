@@ -1,0 +1,27 @@
+weird :: ? -> Union[Str; Int; Some(Int); None]; -- if you delete any of the union constitutent, there will be a type error
+fun weird(x) {
+  case x of
+     1  -> return "lol"
+  | "w" -> return 100500
+  | _   -> Skip -- warning suppression
+  esac;
+  if x > 5
+  then return Some (x - 5)
+  fi;
+  None
+}
+
+fun f(i) {
+  -- we can check it easily with (properly working) pattern matching. Useless branches are reported!
+  case weird(i) of
+     #unboxed -> write(999)
+  |  #string  -> write(777)
+  |  Some(x)  -> write(123456)
+  |  None     -> write(0)
+  esac
+}
+
+f(1);
+f("w");
+f(7);
+f(4)

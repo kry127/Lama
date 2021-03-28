@@ -1,0 +1,12 @@
+weird :: ? -> Union[Str; Some(Int); None]; -- if you delete any of the union constitutent, there will be a type error
+fun weird(x) {
+  case x of
+     1  -> return "lol"
+  | "w" -> return 100500
+  | _   -> Skip -- warning suppression
+  esac;
+  if x > 5
+  then return Some (x - 5)
+  fi;
+  None
+}
