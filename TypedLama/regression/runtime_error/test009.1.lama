@@ -1,3 +1,4 @@
+-- by default, case analysis only gives warnings, not errors, so we can drop programs dynamically
 local ok = case 1 of
    2 -> "ok" -- TODO false negative (should not compile), but can be fixed with const propagation
 esac;

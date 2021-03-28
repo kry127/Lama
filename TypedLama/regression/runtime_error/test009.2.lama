@@ -1,8 +1,9 @@
+-- by default, case analysis only gives warnings, not errors, so we can drop programs dynamically
 local foo = fun (x :: A(Int)) {
   case x of
       A (0) -> "1"
     | A (x, y) -> "3" -- Warning: Branch does not match anything
   esac
-  -- TODO Error: not all branches covered. This file should be in static errors, but there is a bug right now
+  -- Warning: not all branches covered
 };
 foo (A(3)) -- should desperately fail at runtime

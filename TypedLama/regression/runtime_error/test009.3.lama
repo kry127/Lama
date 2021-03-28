@@ -1,8 +1,9 @@
+-- by default, case analysis only gives warnings, not errors, so we can drop programs dynamically
 local foo = fun (x :: A(Int)) {
   case x of
       A (0) -> "1"
   esac
-  -- TODO Should give "not all branches covered" warning
+  -- Warning "not all branches covered"
 };
 
 foo (A(1)) -- would fail at runtime
