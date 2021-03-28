@@ -1,0 +1,8 @@
+-- but how we would still type pattern-matching?
+-- Answer: we should infer type!
+public fun id2 (Abc (x, y)) :: ? {
+  x
+}
+
+
+write(id2(Xyz(6, 8))) -- should fail at compile time

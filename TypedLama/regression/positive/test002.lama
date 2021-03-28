@@ -1,16 +1,5 @@
-import Std;
-
--- we cannot specify function parameter type, because of pattern-matching sugar
-public fun id (x : Int) {
-  x
-}
-
--- instead, we should annotate type of function in postfix notation
-public fun idTyped (x) :: Int -> Int {
-  x
-}
-
-public fun kCombinatorTyped (x, y) :: Int, String -> Int {
+-- functions are not supporting currying
+public fun kCombinatorTyped (x :: Int, y :: Str) :: Int {
   x
 }
 
@@ -21,5 +10,6 @@ public fun id2 (Abc (x, y)) :: ? {
 }
 
 
-write(idTyped(4));
-write(id2(Abc(3, 5)))
+write(kCombinatorTyped(4, "y"));
+write(id2(Abc(3, 5)));
+Unit

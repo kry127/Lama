@@ -23,7 +23,7 @@ local sexp4 :: Union[Str; Str()]; -- Str is string, Str() is Sexp
 local f1 :: Int -> Int = fun(x) { 2 * x }; -- bug found. Reaches the top type and thinks that value is not applicable here
 local f2 :: () -> Int -> ? -- we have a problem -- if first closure accepts zero arguments, then the lhs of '->' is empty :(
   = fun() {
-      fun internal(x) :: Int -> ? {
+      fun internal(x :: Int) {
         XYZ
       }
       internal

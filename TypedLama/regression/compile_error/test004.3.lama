@@ -1,8 +1,8 @@
 -- check that logical value should be TConst
-fun P(i :: Int) :: Str {
+fun p(i :: Int) :: Str {
   i.string
 }
-for i := 0, P(i), i := i+1
+for i := 0, p(i), i := i+1
 do
-
-od;
+    local nop = 0;
+od

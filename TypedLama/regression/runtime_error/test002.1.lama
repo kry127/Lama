@@ -1,0 +1,7 @@
+
+public fun idTyped (x) :: Int -> Int {
+  x
+}
+
+
+write(idTyped(4)) -- should fail at runtime, because can't cast Int to Int -> Int

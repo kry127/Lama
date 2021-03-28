@@ -145,16 +145,30 @@ struct
  @type t =
  (* any type, \forall t. TAny ~ t /\ t ~ TAny        *) | TAny
  (* integer constant type                            *) | TConst
- (* array of elements of specified type              *) | TArr of t
  (* string type                                      *) | TString
- (* S-expression type                                *) | TSexp of string * t list
+ (* array of elements of specified type              *) | TArr of t
  (* Reference type (really, it is one-element array) *) | TRef of t
+ (* S-expression type                                *) | TSexp of string * t list
  (* Arrow type (function call)                       *) | TLambda of t list * t
  (* Union type (maybe we should use sum type?)       *) | TUnion of t list (* TODO make as set *)
  (* Empty type (when no value returns from expr)     *) | TVoid (* == Union() *)
  (* E.g. TSymbol (TVariadic) == Any possible S-expression :) *)
- (* Syntactic sugar: TOptional(t) = TUnion(t, TVoid) *)
  with show, html
+
+   (* Although Ostap provides default way to print values, the output is still weird to the user *)
+   let rec printType = function
+   | TAny -> "?"
+   | TConst -> "Int"
+   | TString -> "String"
+   | TVoid -> "Void"
+   | TArr tt_in -> "[" ^ printType tt_in ^ "]"
+   | TRef tt_in -> "&" ^ printType tt_in
+   | TSexp (name, tts) -> name ^ "(" ^ (String.concat "," @@ List.map printType tts) ^ ")"
+   | TLambda (tts, tbody) -> if List.length tts = 0 then "() -> " ^ printType tbody
+                             else if List.length tts = 1 then (printType @@ List.nth tts 0) ^ " -> " ^ printType tbody
+                             else "(" ^ (String.concat ", " @@ List.map printType tts) ^ ") -> " ^ printType tbody
+   | TUnion (tts) -> "TUnion[" ^ (String.concat "; " @@ List.map printType tts) ^ "]"
+
 
    (* Note: %"keyword" for keywords (DO NOT USE IT), but "[" for regular syntax should be used in parser *)
    (* Question: what is the difference between Util.list and Util.list0 ? *)
@@ -802,12 +816,12 @@ module Expr =
          Note, that type of e and actT should accord, use type_check(_int) function to infer type of e
       *)
       let genCast ?(desc="") l e actT expT =
-        Cast (l, e, expT, Printf.sprintf "%s (\"%s\" => \"%s\")" desc (show(t) actT) (show(t) expT), true)
+        Cast (l, e, expT, Printf.sprintf "%s (\"%s\" => \"%s\")" desc (printType actT) (printType expT), true)
 
       let type_check ctx expr =
         let rec type_check_int ret_ht ctx expr
           =
-            (* Logger.add_warning ~loc:(Some (exprLoc expr)) (Printf.sprintf "TYPING EXPR=%s\nIN CONTEXT=%s" (show(t_alias) expr) (show(Context.t) ctx)); *)
+            (* Logger.add_warning ~loc:(Some (exprLoc expr)) (Printf.sprintf "TYPING EXPR=%s\nIN CONTEXT=%s" (printType expr) (printType ctx)); *)
             match expr with
             | Cast(_, _, t, _, _)      -> t, expr (* Trivial rule, but does it preserve soundness? *)
             | Const _                  -> TConst, expr
@@ -817,15 +831,15 @@ module Expr =
             | Sexp (l, name, subexprs) -> let types, exprs = List.split ( List.map (fun exp -> type_check_int ret_ht ctx exp) subexprs) in
                                           TSexp(name, types), Sexp(l, name, exprs)
             | Var   (l, name)          -> let res = Option.value ~default:TAny (Context.get_type ctx name) in
-                                          (* Logger.add_warning ~loc:(Some l) (Printf.sprintf "Searching type for name \"%s\", found \"%s\"" name (show(t) res)); *)
+                                          (* Logger.add_warning ~loc:(Some l) (Printf.sprintf "Searching type for name \"%s\", found \"%s\"" name (printType res)); *)
                                           res, expr
             | Ref   (_, name)          -> TRef (Option.value ~default:TAny (Context.get_type ctx name)), expr
             | Binop (l, op, exp1, exp2)-> let t1, e1 = type_check_int ret_ht ctx exp1 in
                                           let t2, e2 = type_check_int ret_ht ctx exp2 in
                                           if not (conforms t1 TConst)
-                                          then report_error ~loc:(Some l) @@ Printf.sprintf "left binary operand of type \"%s\" does not conforms to TConst" (show(t) t1)
+                                          then report_error ~loc:(Some l) @@ Printf.sprintf "left binary operand of type \"%s\" does not conforms to \"%s\"" (printType t1) (printType TConst)
                                           else if not (conforms t2 TConst)
-                                          then report_error ~loc:(Some l) @@ Printf.sprintf "right binary operand of type \"%s\" does not conforms to TConst" (show(t) t2)
+                                          then report_error ~loc:(Some l) @@ Printf.sprintf "right binary operand of type \"%s\" does not conforms to \"%s\"" (printType t2) (printType TConst)
                                           else
                                           (* Already checked conformity, so we can safely match with 'Some' value *)
                                           let cst_e1 = genCast ~desc:"left operand cast fail" l e1 t1 TConst in
@@ -881,7 +895,7 @@ module Expr =
                                              (* Put all errors in the log *)
                                              List.iter (fun (x, y) ->
                                                           if not (conforms x y)
-                                                          then Logger.add_error ~loc:(Some l) (Printf.sprintf "\"%s\" does not conform \"%s\"." (show(t) x) (show(t) y))
+                                                          then Logger.add_error ~loc:(Some l) (Printf.sprintf "\"%s\" does not conform \"%s\"." (printType x) (printType y))
                                                        ) (List.combine t_args premise);
                                              (* Fastfail *)
                                              report_error ~loc:(Some l) ("Argument type mismatch in function call")
@@ -923,7 +937,7 @@ module Expr =
                                          let e_cond_cst = genCast ~desc:"if condition didn't evaluate to boolean" (exprLoc cond) e_cond t_cond TConst in
                                          union_contraction (TUnion(t_lbr :: t_rbr :: []))
                                          , If(l, e_cond_cst, e_lbr, e_rbr)
-                                       else report_error ~loc:(Some l) (Printf.sprintf "if condition should be \"%s\", but given type \"%s\"" (show(t) TConst) (show(t) t_cond))
+                                       else report_error ~loc:(Some l) (Printf.sprintf "if condition should be \"%s\", but given type \"%s\"" (printType TConst) (printType t_cond))
             | While(l, cond, body)
             | Repeat(l, body, cond) -> let t_cond, e_cond = type_check_int ret_ht ctx cond in
                                        let t_body, e_body = type_check_int ret_ht ctx body in
@@ -935,7 +949,7 @@ module Expr =
                                          | Repeat(ll, body, cond) -> Repeat(ll, e_body, e_cond_cst)
                                          in
                                          TVoid, repacked_ast (* Assumed the result type of such cycles is empty *)
-                                       else report_error ~loc:(Some l) (Printf.sprintf "loop condition should be \"%s\", but given type \"%s\"" (show(t) TConst) (show(t) t_cond))
+                                       else report_error ~loc:(Some l) (Printf.sprintf "loop condition should be \"%s\", but given type \"%s\"" (printType TConst) (printType t_cond))
             | Case(l, match_expr, branches, return_kind)
                                    -> let t_match_expr, e_match_expr = type_check_int ret_ht ctx match_expr in
                                    (* Then, we analyze each branch in imperative style. O(n^2) * O(Complexity of confomrs) *)
@@ -964,7 +978,7 @@ module Expr =
                                       (* Extra check that all branches have been covered *)
                                       let b_type = union_contraction (TUnion(Array.to_list pattern_types)) in
                                         if not (subtype t_match_expr b_type)
-                                        then Logger.add_warning ~loc:(Some l) (Printf.sprintf "branches \"%s\" do not cover target type \"%s\"" (show(Typing.t) b_type) (show(Typing.t) t_match_expr));
+                                        then Logger.add_warning ~loc:(Some l) (Printf.sprintf "branches \"%s\" do not cover target type \"%s\"" (printType b_type) (printType t_match_expr));
                                       let return_types, e_branches_impl = List.split (Array.to_list returns) in
                                       let e_branches = List.map2 (fun (pat, _) impl -> pat, impl) branches e_branches_impl in
                                       (* Then return accumulated return types in one TUnion type *)
@@ -990,18 +1004,22 @@ module Expr =
                                        let ctx_layer, e_decls = List.fold_left (
                                            fun (acc, e_decls) (name, decl) ->
                                              match decl with
-                                             | (ldef, maybeType,`Fun (args, body))
-                                                   -> let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
+                                             | (ldef, maybeRetType,`Fun (args, body))
+                                                   ->
+                                                      (* User specifies only return type of the function, but we should add user-specified types *)
+                                                      let maybeType = Option.map (fun t -> TLambda(List.map snd args, t)) maybeRetType in
+                                                      let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
                                                       let sub_ret_ht = (TypeHsh.create 128) in (* Make fresh hashtable for returns in body *)
                                                       let type_body, e_body =  type_check_int sub_ret_ht (Context.expand exp_ctx) body; in
                                                       let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
                                                                         [type_body] (TypeHsh.to_seq_keys sub_ret_ht) in
                                                       let l_ret_type = union_contraction (TUnion(union_types)) in
-                                                      let inferred_type = TLambda (List.map snd args, l_ret_type) in
+                                                      (* We consider, that arguments are inferred with TAny type since they can accept everything *)
+                                                      let inferred_type = TLambda (List.map (fun _ -> TAny) args, l_ret_type) in
                                                       if not (conforms inferred_type exp_type)
                                                       then report_error ~loc:(Some(exprLoc expr)) (
                                                         Printf.sprintf "Function \"%s\" having type \"%s\" doesn't conforms declared type %s."
-                                                        name (show(Typing.t) inferred_type) (show(Typing.t) exp_type)
+                                                        name (printType inferred_type) (printType exp_type)
                                                       )
                                                       else
                                                       (match maybeType with
@@ -1022,14 +1040,14 @@ module Expr =
                                                                     let ancestorConcreteType = Option.value ~default:(Typing.TAny) optAncestorConcreteType in
                                                                     if not (conforms definitelyType ancestorConcreteType)
                                                                     then report_error ~loc:(Some l)
-                                                                        (Printf.sprintf "Type usage is incompatible with previous type usage: \"%s\" => \"%s\"" (show(t) ancestorConcreteType) (show(t) definitelyType) )
+                                                                        (Printf.sprintf "Type usage is incompatible with previous type usage: \"%s\" => \"%s\"" (printType ancestorConcreteType) (printType definitelyType) )
                                                                     else acc_ext, e_decls (* Drop declaration to avoid confusion *)
                                                       | Some def ->
                                                                     let t_def, e_def = type_check_int ret_ht exp_ctx def in
                                                                     if not (conforms t_def exp_type)
                                                                        then report_error ~loc:(Some (exprLoc expr)) (
                                                                          Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
-                                                                         name (show(Typing.t) t_def) (show(Typing.t) exp_type)
+                                                                         name (printType t_def) (printType exp_type)
                                                                        );
                                                                     (* Do not forget to update declaration *)
                                                                     (match maybeType with
@@ -1412,8 +1430,10 @@ module Expr =
                  | Pattern.Named (name, Pattern.Wildcard) -> (name, argType) :: args, body
                  | Pattern.Wildcard -> (env#get_tmp, argType) :: args, body
                  | p ->
+                    (* TODO argtype ignored. Either restrict user to define both of check conformity *)
+                    let (_, pType, _) = Typecheck.infer_pattern_type p in
                     let arg = env#get_tmp in
-                    (arg, argType) :: args, Case (l#coord, Var (l#coord, arg), [p, body], Weak)
+                    (arg, pType) :: args, Case (l#coord, Var (l#coord, arg), [p, body], Weak)
               )
               args
               ([], body)
@@ -1760,8 +1780,10 @@ module Definition =
                   | Pattern.Named (name, Pattern.Wildcard) -> (name, argtype) :: args, body
                   | Pattern.Wildcard -> (env#get_tmp, argtype) :: args, body
                   | p ->
+                     (* TODO argtype ignored. Either restrict user to define both of check conformity *)
+                     let (_, pType, _) = Expr.Typecheck.infer_pattern_type p in
                      let arg = env#get_tmp in
-                     (arg, argtype) :: args, Expr.Case (l#coord, Expr.Var(l#coord, arg), [p, body], Expr.Weak)
+                     (arg, pType) :: args, Expr.Case (l#coord, Expr.Var(l#coord, arg), [p, body], Expr.Weak)
                 )
                 args
                 ([], body)
