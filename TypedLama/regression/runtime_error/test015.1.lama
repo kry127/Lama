@@ -1,0 +1,8 @@
+-- trying to test more high-order functions
+-- something like ((a -> a) -> a) -> a
+
+fun hof2(hof1 :: (? -> Int) -> Int) {
+  hof1 (fun (x :: Int) {x - 2})
+}
+
+write(hof2 (fun (f) {f(Haha) + 3})) -- should produce runtime error
