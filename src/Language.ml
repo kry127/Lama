@@ -954,7 +954,8 @@ module Expr =
                                    -> let t_match_expr, e_match_expr = type_check_int ret_ht ctx match_expr in
                                    (* Then, we analyze each branch in imperative style. O(n^2) * O(Complexity of confomrs) *)
                                       let len = List.length branches in
-                                      let pattern_types = Array.make len TAny in
+                                      (* Make array of TVoids in order not to cover matching variable initially *)
+                                      let pattern_types = Array.make len TVoid in
                                       let returns = Array.make len (TAny, Const (l, 0)) in
                                       for i = 0 to len - 1 do
                                         let (pattern, implementation) = (List.nth branches i) in

@@ -5,4 +5,4 @@ local foo = fun (x :: A(Int)) {
   esac
   -- TODO Error: not all branches covered. This file should be in static errors, but there is a bug right now
 };
-foo (A(3)) -- should desperately fail
+foo (A(3)) -- should desperately fail at runtime
