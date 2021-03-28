@@ -3,6 +3,6 @@
 public fun id2 (Abc (x, y)) :: ? {
   x
 }
-
-
-write(id2(Xyz(6, 8))) -- should fail at compile time
+write(id2(Abc(6, 8)));
+write(id2(Xyz(6, 8))); -- should fail at compile time
+Unit

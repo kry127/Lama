@@ -1010,7 +1010,9 @@ module Expr =
                                                       let maybeType = Option.map (fun t -> TLambda(List.map snd args, t)) maybeRetType in
                                                       let acc_ext, exp_ctx, exp_type = get_expanded_layer_context_type acc name maybeType in
                                                       let sub_ret_ht = (TypeHsh.create 128) in (* Make fresh hashtable for returns in body *)
-                                                      let type_body, e_body =  type_check_int sub_ret_ht (Context.expand exp_ctx) body; in
+                                                      (* expand context and add new free variables in it *)
+                                                      let freshFunContext = Context.expandWith (CtxLayer args) exp_ctx in
+                                                      let type_body, e_body =  type_check_int sub_ret_ht freshFunContext body; in
                                                       let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
                                                                         [type_body] (TypeHsh.to_seq_keys sub_ret_ht) in
                                                       let l_ret_type = union_contraction (TUnion(union_types)) in

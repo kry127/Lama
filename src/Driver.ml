@@ -191,11 +191,15 @@ let typecheckWrapper ((imports, infixes), untypedAst) =
 
 let outputLog lvl = Printf.eprintf "%s\n" (Language.Logger.show ~lvl:lvl ())
 
-let checkLoggerIfError = fun () ->
+let loggerCheckpoint = fun () ->
     if Language.Logger.has_errors ()
     then begin
       outputLog 0;
       exit 255
+    end
+    else begin
+      outputLog 0; (* Otherwise just output log *)
+      Language.Logger.clear () (* And clear it *)
     end
 
 let main =
@@ -206,15 +210,14 @@ let main =
     let parseResult = try parse cmd with Language.Semantic_error msg -> `Fail msg in
     match parseResult with
     | `Ok untyped_prog ->
-       checkLoggerIfError (); (* If errors occured, tear down *)
+       loggerCheckpoint (); (* If errors occured, tear down, otherwise print logger content *)
        let prog = if cmd#get_typecheck then typecheckWrapper untyped_prog else untyped_prog in
-       checkLoggerIfError();
-       (* outputLog 0; *) (* for debug *)
+       loggerCheckpoint();
        cmd#dump_AST (snd prog);
        (match cmd#get_mode with
         | `Default | `Compile ->
             ignore @@ X86.build cmd prog;
-            checkLoggerIfError ();
+            loggerCheckpoint ();
         | _ -> 
   	   let rec read acc =
 	     try
@@ -229,10 +232,9 @@ let main =
 	     then Language.eval prog input
 	     else SM.run (SM.compile cmd prog) input
 	   in
-       checkLoggerIfError ();
+       loggerCheckpoint ();
 	   List.iter (fun i -> Printf.printf "%d\n" i) output 
-       );
-       Language.Logger.show ~lvl:0 () (* At last, output warnings if any *)
+       )
     | `Fail er -> Printf.eprintf "Error: %s\n" er; outputLog 0; exit 255
   with
   | Language.Semantic_error msg -> Printf.printf "Error: %s\n" msg; outputLog 0; exit 255
