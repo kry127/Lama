@@ -1,0 +1,13 @@
+-- check function casting (this may cause Cast- fail)
+-- we would like smth like:
+-- Cast(f, ?, Int->Str, +) @ "kek" -> Cast(f @ Cast("kek", Int, -), Str, +)
+-- we would like to trigger Cast-
+
+-- this function work is to convert integer to string
+fun intStringer(x :: Int) {
+  x.string
+}
+-- declare some dynamic variable:
+local dyn :: ? = "This Chad can be anything he wants";
+dyn := intStringer; -- TODO make cast not only expression class, but rather value class, see next line
+dyn("lel") -- normally, cast would fail, but now...
