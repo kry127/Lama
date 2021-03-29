@@ -715,6 +715,7 @@ module Expr =
           let rec value_conforms value typ
             = match (value, typ) with
             | (_   , TAny) -> true
+            | (Value.Cast(_, _, tt, _, _), tt') -> conforms tt tt'
             | (Value.Empty , TVoid) -> true
             | (Value.Var _, _) -> false (* ??? *)
             | (Value.Elem(container, i), l) -> (
@@ -1440,26 +1441,43 @@ module Expr =
             let name = infix_name s in Loc.attach name l#coord; ignore atr (Var (l#coord, name))
           )
       }
-      | l:$ %"fun" "(" args:!(Util.list0)[ostap(!(Pattern.parse) (-"::" !(Typing.typeParser))?)] ")"
+      | l:$ %"fun" "(" args:!(Util.list0)[ostap($ !(Pattern.parse) (-"::" !(Typing.typeParser))?)] ")"
            retType:(-"::" !(Typing.typeParser))?
            "{" body:scope[infix][Weak] "}"=> {notRef atr} :: (not_a_reference l) => {
-          let args, body =
+
+          let args, defs, body =
             List.fold_right
-              (fun (arg, optType) (args, body) ->
-                 let argType = Option.value ~default:(Typing.TAny) optType in
-                 match arg with
-                 | Pattern.Named (name, Pattern.Wildcard) -> (name, argType) :: args, body
-                 | Pattern.Wildcard -> (env#get_tmp, argType) :: args, body
-                 | p ->
-                    (* TODO argtype ignored. Either restrict user to define both of check conformity *)
-                    let (_, pType, _) = Typecheck.infer_pattern_type p in
-                    let arg = env#get_tmp in
-                    (arg, pType) :: args, Case (l#coord, Var (l#coord, arg), [p, body], Weak)
+              (fun (argloc, arg, argtypeOption) (args, defs, body) ->
+                (* Acknowledge declared type and define default wrapper to insert negative cast *)
+                let argtype = Option.value ~default:(Typing.TAny) argtypeOption in
+                let new_defs name = (match argtype with
+                  | TAny -> name, defs
+                  | tt   ->
+                    let name' = env#get_tmp in
+                    let cast = Cast(argloc#coord, Var(argloc#coord, name'), tt, "input arg cast failed", false) in
+                    let defs' =  (name, (`Local, Some tt, `Variable (Some cast))) :: defs
+                    in name', defs'
+                ) in
+
+                (* Then check what pattern it is *)
+                match arg with
+                | Pattern.Named (name, Pattern.Wildcard) -> let name', defs' = new_defs name
+                                                            in (name', argtype) :: args, defs', body
+                | Pattern.Wildcard -> let name', defs' = new_defs env#get_tmp
+                                      in (name', argtype) :: args, defs', body
+                | p ->
+                   (* TODO argtype ignored. Either restrict user to define both of check conformity *)
+                   let (_, pType, _) = Typecheck.infer_pattern_type p in
+                   if not (Typecheck.Conformity.conforms pType argtype || Typecheck.Conformity.conforms argtype pType)
+                   then report_error ~loc:(Some argloc#coord) "pattern matching sugar conflicts with declared type"
+                   else
+                   let name', defs' = new_defs env#get_tmp in
+                   (name', pType) :: args, defs', Case (argloc#coord, Var(argloc#coord, name'), [p, body], Weak)
               )
               args
-              ([], body)
+              ([], [], body)
           in
-          ignore atr (Lambda (l#coord, args, body, Option.value ~default:(Typing.TAny) retType))
+          ignore atr (Lambda (l#coord, args, Scope (l#coord, defs, body), Option.value ~default:(Typing.TAny) retType))
       }
 
       | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (Array (l#coord, es))}
@@ -1786,35 +1804,51 @@ module Definition =
           locs:!(Util.list (local_var m infix)) next:";" {locs, infix}
      (* Use "useTypeParser" to parse type assignments *)
     |  name: LIDENT -"::" typ: !(Typing.typeParser) -";" {[(name, (`Local, Some typ, `Variable None))], infix}
-    | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[ostap(!(Pattern.parse) (-"::" !(Typing.typeParser))?)] -")"
+    | - <(m, orig_name, name, infix', flag)> : head[infix] -"(" -args:!(Util.list0)[ostap($ !(Pattern.parse) (-"::" !(Typing.typeParser))?)] -")"
            -typ:(-"::" $ t:!(Typing.typeParser) {t})?
           (l:$ "{" body:exprScope[infix'][Expr.Weak] "}" {
             if flag && List.length args != 2 then report_error ~loc:(Some l#coord) "infix operator should accept two arguments";
             (match m with
             | `Extern -> report_error ~loc:(Some l#coord) (Printf.sprintf "a body for external function \"%s\" can not be specified" (Subst.subst orig_name))
             | _   -> ());
-            let args, body =
+            let args, defs, body =
               List.fold_right
-                (fun (arg, argtypeOption) (args, body) ->
+                (fun (argloc, arg, argtypeOption) (args, defs, body) ->
+                  (* Acknowledge declared type and define default wrapper to insert negative cast *)
                   let argtype = Option.value ~default:(Typing.TAny) argtypeOption in
+                  let new_defs name = (match argtype with
+                    | TAny -> name, defs
+                    | tt   ->
+                      let name' = env#get_tmp in
+                      let cast = Expr.Cast(argloc#coord, Expr.Var(argloc#coord, name'), tt, "input arg cast failed", false) in
+                      let defs' =  (name, (`Local, Some tt, `Variable (Some cast))) :: defs
+                      in name', defs'
+                  ) in
+
+                  (* Then check what pattern it is *)
                   match arg with
-                  | Pattern.Named (name, Pattern.Wildcard) -> (name, argtype) :: args, body
-                  | Pattern.Wildcard -> (env#get_tmp, argtype) :: args, body
+                  | Pattern.Named (name, Pattern.Wildcard) -> let name', defs' = new_defs name
+                                                              in (name', argtype) :: args, defs', body
+                  | Pattern.Wildcard -> let name', defs' = new_defs env#get_tmp
+                                        in (name', argtype) :: args, defs', body
                   | p ->
                      (* TODO argtype ignored. Either restrict user to define both of check conformity *)
                      let (_, pType, _) = Expr.Typecheck.infer_pattern_type p in
-                     let arg = env#get_tmp in
-                     (arg, pType) :: args, Expr.Case (l#coord, Expr.Var(l#coord, arg), [p, body], Expr.Weak)
+                     if not (Expr.Typecheck.Conformity.conforms pType argtype || Expr.Typecheck.Conformity.conforms argtype pType)
+                     then report_error ~loc:(Some argloc#coord) "pattern matching sugar conflicts with declared type"
+                     else
+                     let name', defs' = new_defs env#get_tmp in
+                     (name', pType) :: args, defs', Expr.Case (argloc#coord, Var(argloc#coord, name'), [p, body], Expr.Weak)
                 )
                 args
-                ([], body)
+                ([], [], body)
             in
             (* if 'typ' is None, well then, it will be inferred from the body *)
-            [(name, (m, typ, `Fun (args, body)))], infix'
+            [(name, (m, typ, `Fun (args, Expr.Scope (l#coord, defs, body))))], infix'
          } |
          l:$ ";" {
            (* interpret none as TAny *)
-           let args = List.map (fun name, ttype -> name, Option.value ~default:(Typing.TAny) ttype) args in
+           let args = List.map (fun _, name, ttype -> name, Option.value ~default:(Typing.TAny) ttype) args in
             match m with
             | `Extern -> [(name, (m, None, `Fun ((List.map (fun name, ttype -> env#get_tmp, ttype) args), Expr.Skip l#coord)))], infix'
             | _       -> report_error ~loc:(Some l#coord) (Printf.sprintf "missing body for the function/infix \"%s\"" orig_name)

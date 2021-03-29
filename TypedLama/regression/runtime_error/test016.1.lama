@@ -1,0 +1,8 @@
+-- this function work is to convert integer to string
+fun intStringer(x :: Int) {
+  (x + 1).string
+}
+-- declare some dynamic variable:
+local dyn :: ? = "This variable can take arbitrary value";
+dyn := intStringer;
+dyn("lel") -- TODO wrong blame, should've blamed call with "lel" instead of blaming "x + 1"

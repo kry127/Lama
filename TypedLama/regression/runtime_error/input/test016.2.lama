@@ -3,12 +3,11 @@
 -- Cast(f, ?, Int->Str, +) @ "kek" -> Cast(f @ Cast("kek", Int, -), Str, +)
 -- we would like to trigger Cast-
 
--- this function work is to convert anything to string
--- in runtime_error examples we'll se behavior, when x :: Int
-fun intStringer(x :: ?) {
+-- this function work is to convert integer to string
+fun intStringer(x :: Int) {
   x.string
 }
 -- declare some dynamic variable:
-local dyn :: ? = "This variable can hold arbitrary value";
+local dyn :: ? = "This variable can take arbitrary value";
 dyn := intStringer; -- intStringer forgets it's type information with this assignment here
-dyn("input") -- but this call is OK, since intStringer argument is dynamic
+dyn("input") -- so, this gives negative cast, i.e. context is blamed, which is string "input"
