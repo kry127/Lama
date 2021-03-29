@@ -1,0 +1,15 @@
+-- yet another typing example of List.lama module, the functions are pretty interesting
+
+public fun map (f :: Union[E(?); G(?)] -> H(?), l :: Union[Cons( Union[E(?); G(?)], ?); Nil]) {
+  case l of
+    Nil     -> Nil
+  | Cons(eorg, ls) -> Cons(f (eorg), map (f, ls))
+  esac
+}
+
+local list1 = Cons(E(1), Cons(G(2), Cons(E(3), Cons(G(4), Nil))));
+local wrongList = Cons(E(1), Cons(E(2), Cons(C(5), Nil)));
+
+map (fun (x) {case x of E(a) -> H(a) | G(a) -> H(0 - a) esac}, list1);
+Unit
+

@@ -1,0 +1,14 @@
+-- trying to test even more high-order functions
+-- something like (((a -> a) -> a) -> (a -> a) -> a) -> a
+
+fun neg(x) { 0 - x }
+fun suc(x) { 1 + x }
+
+fun hof2(hof1 :: (Int -> Int) -> Int, f :: Int -> Int) {
+  hof1 (fun(x) {f (suc (x))})
+}
+
+local someNumber :: ? = "oopsie";
+
+write(hof2 (fun (f) {f(someNumber)}, neg));
+Unit

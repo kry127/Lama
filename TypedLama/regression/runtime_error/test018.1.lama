@@ -1,0 +1,20 @@
+-- yet another typing example of List.lama module, the functions are pretty interesting
+
+public fun map (f :: Union[E(?); G(?)] -> H(?), l :: Union[Cons( Union[E(?); G(?)], ?); Nil]) {
+  case l of
+    Nil     -> Nil
+  | Cons(eorg, ls) -> Cons(f (eorg), map (f, ls)) -- this is more unconscious message from type checker
+                                                  -- here negativeness of cast comes from type of function "f"
+                                                  -- it inserts negative cast for 'map' function, and then
+                                                  -- covariantly spans negative cast on 'f' call in this line.
+                                                  -- So, the context is blamed, e.g. ad-hoc function at line 18
+                                                  -- passed in map with first argument
+  esac
+}
+
+local list1 = Cons(E(1), Cons(G(2), Cons(E(3), Cons(G(4), Nil))));
+local wrongList = Cons(E(1), Cons(E(2), Cons(C(5), Nil)));
+
+map (fun (x) {case x of E(a) -> a | G(a) -> 0 - a esac}, list1); -- should fail
+Unit
+

@@ -1,0 +1,17 @@
+-- trying to test even more high-order functions
+-- something like (((a -> a) -> a) -> (a -> a) -> a) -> a
+
+fun neg(x) { Neg(x) }
+fun suc(x) { x + 1 }
+
+fun hof2(hof1 :: (Int -> ?) -> Int, f :: ? -> Int) {
+  hof1 (fun(x :: Int) {f (suc (x))}) -- but neg from line 16 blamed here as negative (e.g. blamed context)
+                                     -- we should avoid blamed context, because we don't know the source of f
+                                     -- (here the source of f is determined by deduction)
+}
+
+
+local someNumber :: ? = -8;
+
+write(hof2 (fun (f) {f(someNumber)}, neg)); -- TODO neg here should be blamed (it is not ? -> Int, but ? -> Neg(x))
+Unit
