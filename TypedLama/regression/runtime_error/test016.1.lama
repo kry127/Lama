@@ -5,4 +5,4 @@ fun intStringer(x :: Int) {
 -- declare some dynamic variable:
 local dyn :: ? = "This variable can take arbitrary value";
 dyn := intStringer;
-dyn("lel") -- TODO wrong blame, should've blamed call with "lel" instead of blaming "x + 1"
+dyn("input") -- TODO wrong blame, should've blamed call with "input" instead of blaming "x + 1"

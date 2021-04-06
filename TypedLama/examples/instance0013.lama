@@ -1,0 +1,26 @@
+import
+
+-- imagine we have some function with interface:
+-- fun fibonacci(n :: Int) :: Int
+
+-- but we would like to use result memoizing library which happened to be untyped
+fun mkIntHashtbl(size) {
+  fun internalHash(num, i) {
+    (num - internalHash(num * 2, i - 1)) % size
+  }
+  local tbl = emptyHashTab (size, fun (x) {internalHash(x, 5)}, fun (x, y) { return x == y });
+  fun put(k, v) {
+    tbl := addHashTab(tbl, k, v)
+  }
+  fun get(k) {
+    findHashTab(tbl, k)
+  }
+  return put, get
+}
+
+fun fibonacci(n :: Int) :: Int {
+    put, get := mkIntHashtbl(n)
+    fun memoFibonacci(k) {
+
+    }
+}
