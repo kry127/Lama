@@ -522,7 +522,7 @@ module Expr =
     (* pattern-matching           *) | Case      of Loc.t * t * (Pattern.t * t) list * atr
     (* return statement           *) | Return    of Loc.t * t option
     (* ignore a value             *) | Ignore    of Loc.t * t
-    (* entering the scope         *) | Scope     of Loc.t * (string * decl) list * t
+    (* entering the scope         *) | Scope     of Loc.t * (string * decl) list * t * scope_type
     (* lambda expression          *) | Lambda    of Loc.t * (string * Typing.t) list * t * Typing.t
     (* leave a scope              *) | Leave     of Loc.t
     (* intrinsic (for evaluation) *) | Intrinsic of Loc.t * (t config, t config) arrow
@@ -531,9 +531,8 @@ module Expr =
     and decl = [`Local | `Public | `Extern | `PublicExtern ]
                  * Typing.t option
                  * [`Fun of (string * Typing.t) list * t | `Variable of t option]
+    and scope_type = NoTypecheck | StaticTypecheck | GradualTyping
     with show, html
-
-    let t_alias = t
 
     let notRef = function Reff -> false | _ -> true
     let isVoid = function Void | Weak -> true  | _ -> false
@@ -543,7 +542,7 @@ module Expr =
                            | Ref(l, _) | Binop(l, _, _, _) | Elem(l, _, _) | ElemRef(l, _, _) | Length(l, _)
                            | StringVal(l, _) | Call(l, _, _) | Assign(l, _, _) | Seq(l, _, _) | Skip(l)
                            | If(l, _, _, _) | While(l, _, _) | Repeat(l, _, _) | Case(l, _, _, _) | Return(l, _)
-                           | Ignore(l, _) | Scope(l, _, _) | Lambda(l, _, _, _) | Leave(l)
+                           | Ignore(l, _) | Scope(l, _, _, _) | Lambda(l, _, _, _) | Leave(l)
                            | Intrinsic(l, _) | Control(l, _) -> l
 
     (* Available binary operators:
@@ -994,11 +993,20 @@ module Expr =
                                    | Some ee -> let t_expr, e_expr = type_check_int ret_ht ctx ee in
                                                 TypeHsh.add ret_ht t_expr true; (* Add result to type set*)
                                                 TVoid, Return(l, Some e_expr)
-                                   | None    -> TVoid, expr)
+                                   | None    -> TypeHsh.add ret_ht TVoid true; (* Return of void is result too *)
+                                                TVoid, expr
+                                   )
             | Ignore(l, expr) -> let _, e_expr = type_check_int ret_ht ctx expr in
                                  TVoid, Ignore(l, e_expr)
             (* decided, that Scope does not affect structure of the AST *)
-            | Scope(l, decls, expr) -> let get_expanded_layer_context_type ctx_layer name maybeType =
+            | Scope(l, decls, expr, scope_type) ->
+                            begin
+                              match scope_type with
+                              | NoTypecheck -> TAny, expr (* leave expression alone with some type *)
+                              | StaticTypecheck -> report_error ~loc:(Some l) "Static typecheck only not implemented" (* TODO *)
+                              | GradualTyping ->
+
+                                       let get_expanded_layer_context_type ctx_layer name maybeType =
                                          let exp_ctx_layer = (match maybeType with
                                            | Some t -> Context.extend_layer ctx_layer name t
                                            | None   -> ctx_layer
@@ -1067,7 +1075,8 @@ module Expr =
                                                       )
                                            ) ((Context.CtxLayer []), []) decls in
                                        let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
-                                       t_expr, Scope(l, List.rev e_decls, e_expr)
+                                       t_expr, Scope(l, List.rev e_decls, e_expr, scope_type)
+                            end
             | Lambda(l, args, body, retType) ->  (* collect return yielding types and join with this type with TUnion *)
                                     let sub_ret_ht = (TypeHsh.create 128) in
                                     let exp_context = List.fold_right (fun (name, tt) ctx -> Context.extend ctx name tt)
@@ -1161,7 +1170,7 @@ module Expr =
       match expr with
       | Lambda (l, args, body, _) ->
          eval (st, i, o, Value.Closure (List.map fst args, body, [|st|]) :: vs) (Skip l) k
-      | Scope (l, defs, body) ->
+      | Scope (l, defs, body, _) ->
          let vars, body, bnds =
            List.fold_left
              (fun (vs, bd, bnd) -> function
@@ -1377,7 +1386,7 @@ module Expr =
       let def s   = let Some def = Obj.magic !defCell in def s in
       let ostap (
       parse[infix][atr]: h:basic[infix][Void] l:$ -";" t:parse[infix][atr] {Seq (l#coord, h, t)} | basic[infix][atr];
-      scope[infix][atr]: l:$ <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (l#coord, d, expr)} | {isVoid atr} => l:$ <(d, infix')> : def[infix] => {d <> []} => {Scope (l#coord, d, materialize atr (Skip l#coord))};
+      scope[infix][atr]: l:$ <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (l#coord, d, expr, GradualTyping)} | {isVoid atr} => l:$ <(d, infix')> : def[infix] => {d <> []} => {Scope (l#coord, d, materialize atr (Skip l#coord), GradualTyping)};
       basic[infix][atr]: !(expr (fun x -> x) (Array.map (fun (a, (atr, l)) -> a, (atr, List.map (fun (s, _, f) -> ostap (- $(s)), f) l)) infix) (primary infix) atr);
       primary[infix][atr]:
           s:(l:$ s:"-"? {match s with None -> fun x -> x | _ -> fun x -> Binop (l#coord, "-", Const (l#coord, 0), x)})
@@ -1482,11 +1491,12 @@ module Expr =
               args
               ([], [], body)
           in
-          ignore atr (Lambda (l#coord, args, Scope (l#coord, defs, body), Option.value ~default:(Typing.TAny) retType))
+          ignore atr (Lambda (l#coord, args, Scope (l#coord, defs, body, GradualTyping), Option.value ~default:(Typing.TAny) retType))
       }
 
       | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (Array (l#coord, es))}
       | -"{" scope[infix][atr] -"}"
+      | l:$ -"#NoTypecheck" -"{" s:scope[infix][atr] -"}" {match s with | Scope(loc, defs, body, _) -> Scope(loc, defs, body, NoTypecheck) | e -> Scope(l#coord, [], e, NoTypecheck)}
       | l:$ "{" es:!(Util.list0)[parse infix Val] "}" => {notRef atr} :: (not_a_reference l) => {ignore atr (match es with
                                                                                       | [] -> Const (l#coord, 0)
                                                                                       | _  -> List.fold_right (fun x acc -> Sexp (l#coord, "cons", [x; acc])) es (Const (l#coord, 0)))
@@ -1511,7 +1521,7 @@ module Expr =
                s:parse[infix][Void] %"do" b:scope[infix][Void] => {isVoid atr} => %"od"
                {materialize atr
                   (match i with
-                  | Scope (l, defs, i) -> Scope (l, defs, Seq (exprLoc i, i, While (exprLoc c, c, Seq (exprLoc b, b, s))))
+                  | Scope (l, defs, i, scope_typing) -> Scope (l, defs, Seq (exprLoc i, i, While (exprLoc c, c, Seq (exprLoc b, b, s))), scope_typing)
                   | _               -> Seq (exprLoc i, i, While (exprLoc c, c, Seq (exprLoc b, b, s)))
                   )
                }
@@ -1519,7 +1529,7 @@ module Expr =
       | %"repeat" s:scope[infix][Void] %"until" e:basic[infix][Val] => {isVoid atr} => {
           materialize atr @@
             match s with
-            | Scope (l, defs, s) ->
+            | Scope (l, defs, s, _) ->
                let defs, s =
                  List.fold_right (fun (name, def) (defs, s) ->
                      match def with
@@ -1529,7 +1539,7 @@ module Expr =
                    defs
                    ([], s)
                in
-               Scope (l, defs, Repeat (l, s, e))
+               Scope (l, defs, Repeat (l, s, e), GradualTyping)
             | _  -> Repeat (exprLoc s, s, e)
       }
       | %"return" l:$ e:basic[infix][Val]? => {isVoid atr} => {Return (l#coord, e)}
@@ -1849,7 +1859,7 @@ module Definition =
                 ([], [], body)
             in
             (* if 'typ' is None, well then, it will be inferred from the body *)
-            [(name, (m, typ, `Fun (args, Expr.Scope (l#coord, defs, body))))], infix'
+            [(name, (m, typ, `Fun (args, Expr.Scope (l#coord, defs, body, GradualTyping))))], infix'
          } |
          l:$ ";" {
            (* interpret none as TAny *)
@@ -1871,7 +1881,7 @@ module Interface =
       let append str = Buffer.add_string buf str in
       List.iter (fun i -> append "I,"; append i; append ";\n") imps;
       (match p with
-       | Expr.Scope (l, decls, _) ->
+       | Expr.Scope (l, decls, _, _) ->
           List.iter
             (function
              | (name, (`Public, _, item)) | (name, (`PublicExtern, _, item))  ->
@@ -1982,7 +1992,7 @@ ostap (
 };
 
 (* Workaround until Ostap starts to memoize properly *)
-    constparse[cmd]: <(is, infix)> : imports[cmd] l:$ d:!(Definition.constdef) {(is, []), Expr.Scope (l#coord, d, Expr.materialize Expr.Weak (Expr.Skip (0, 0)))}
+    constparse[cmd]: <(is, infix)> : imports[cmd] l:$ d:!(Definition.constdef) {(is, []), Expr.Scope (l#coord, d, Expr.materialize Expr.Weak (Expr.Skip (0, 0)), Expr.GradualTyping)}
 (* end of the workaround *)
 )
 
@@ -2029,7 +2039,7 @@ let parse cmd =
         <(d, infix')> : definitions[infix]
         le:$ expr:expr[infix'][Expr.Weak]? {
             let scopeBody = match expr with None -> Expr.materialize Expr.Weak (Expr.Skip le#coord) | Some e -> e in
-            (env#get_imports @ is, Infix.extract_exports infix'), Expr.Scope (Expr.exprLoc scopeBody, d, scopeBody)
+            (env#get_imports @ is, Infix.extract_exports infix'), Expr.Scope (Expr.exprLoc scopeBody, d, scopeBody, Expr.GradualTyping)
           }
         )
   in

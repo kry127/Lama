@@ -770,7 +770,7 @@ let compile cmd ((imports, infixes), p) =
      let env, name  = env#add_lambda args b in
      env#register_call name, false, lines @ [PROTO (name, env#current_function)] 
        
-  | Expr.Scope (ll, ds, e)  ->
+  | Expr.Scope (ll, ds, e, _)  ->
      let blab, env = env#get_label in
      let elab, env = env#get_label in
      let env = env#push_scope blab elab in
