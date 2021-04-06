@@ -878,21 +878,17 @@ module Expr =
                                        TString, StringVal(l, e_exp) (* The most plesant rule: anything can be matched to a string *)
             | Call(l, f, args)      -> let t_f, e_f = type_check_int ret_ht ctx f in
                                        let t_args, e_args = List.split (List.map (fun arg -> type_check_int ret_ht ctx arg) args) in
-                                       let rec ret_func t_ff =
+                                       let rec ret_func t_ff acc_f acc_args =
                                          match t_ff with
-                                         | TAny -> TAny, Call(l, e_f, e_args)
+                                         | TAny -> acc_f, acc_args, TAny (* Returned quadruple: *)
                                          | TLambda (premise, conclusion) ->
                                            if try List.for_all2 conforms t_args premise
                                               with Invalid_argument(_) -> report_error ~loc:(Some l) ("Arity mismatch in function call") (* TODO NO VARIADIC SUPPORT *)
                                            then (* In 'then' branch each expression from t_args conform to the premise of function *)
-                                              (* Step 1. cast all arguments to the input type of the function *)
-                                              let cast_args = List.map2 (fun (exp, tExp) tAct -> genCast ~desc:"arg cast fail" l exp tExp tAct)
-                                                                        (List.combine e_args t_args) premise in
-                                              (* Step 2. then perform call of the function *)
-                                              let call_func = Call(l, e_f, cast_args) in
-                                              (* Step 3. cast result of the function to the resulting type *)
-                                              let casted_call_func = genCast ~desc:"func result cast fail" l call_func TAny conclusion in
-                                              conclusion, casted_call_func
+                                             (* Step 1. cast all arguments to the input type of the function *)
+                                             let cast_args = List.map2 (fun (exp, tExp) tAct -> genCast ~desc:"arg cast fail" l exp tExp tAct)
+                                                                       (List.combine acc_args t_args) premise in
+                                                    acc_f, cast_args, conclusion
                                            else begin
                                              (* Put all errors in the log *)
                                              List.iter (fun (x, y) ->
@@ -902,15 +898,22 @@ module Expr =
                                              (* Fastfail *)
                                              report_error ~loc:(Some l) ("Argument type mismatch in function call")
                                            end
-                                         | TUnion (ffs) -> union_contraction (TUnion (
-                                                             List.filter_map (* Combine filtering and mapping at the same time *)
-                                                             (* If no exception comes out, give out type as is, otherwise nothing returned *)
-                                                             (fun f -> try Some (fst (ret_func f)) with _ -> None)
-                                                             ffs
-                                                           )), Call(l, e_f, e_args)
+                                         | TUnion (ffs) -> let ast_f, ast_args, taus =
+                                                             List.fold_left
+                                                             (fun (ast_f, acc_args, taus) tt ->
+                                                               let ast_f', acc_args', tau = ret_func tt ast_f acc_args
+                                                               in (ast_f', acc_args', tau :: taus)
+                                                             )
+                                                             (e_f, e_args, []) ffs
+                                                           in
+                                                           ast_f, ast_args, union_contraction (TUnion (taus))
                                          | _ -> report_error ~loc:(Some l) ("Cannot perform a call for non-callable object")
                                        in
-                                       let resType, resExpr = ret_func t_f in
+                                       let ast_f, ast_args, resType = ret_func t_f e_f e_args in
+                                       (* Step 2. then perform call of the function *)
+                                       let call_func = Call(l, ast_f, ast_args) in
+                                       (* Step 3. cast result of the function to the resulting type (TODO check that should never happen) *)
+                                       let resExpr = genCast ~desc:"func result cast fail" l call_func TAny resType in
                                        resType, resExpr
 
             | Assign(_, reff, exp)  -> let t_reff, e_reff = type_check_int ret_ht ctx reff in
