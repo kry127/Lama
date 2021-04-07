@@ -1,26 +1,86 @@
-import
-
 -- imagine we have some function with interface:
 -- fun fibonacci(n :: Int) :: Int
 
--- but we would like to use result memoizing library which happened to be untyped
-fun mkIntHashtbl(size) {
-  fun internalHash(num, i) {
-    (num - internalHash(num * 2, i - 1)) % size
+-- but we would like to use fully untyped dynamic function, for example
+fun mod(x :: ?, m :: ?) :: ? { #NoTypecheck {(if x < 0 then 0-x else x fi) % m}}
+
+-- let's write two hash tables: typed and fully untyped, who is faster? (ofc untyped)
+fun mkIntHashtblTyped(sizeIgnored) { {
+  local size = 128;
+  fun internalHash(num :: Int, i :: Int) :: Int {
+    if i == 0 then return mod(num, size) fi;
+    mod(num - internalHash(num * 2, i - 1), size)
   }
-  local tbl = emptyHashTab (size, fun (x) {internalHash(x, 5)}, fun (x, y) { return x == y });
+  -- makearray is not working in interpretation mode
+  local tbl :: [Union[None; Some(?)]] =
+              [
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None
+              ];
   fun put(k, v) {
-    tbl := addHashTab(tbl, k, v)
+    local hash = internalHash(k, 555);
+    tbl[hash] := Some(v)
   }
   fun get(k) {
-    findHashTab(tbl, k)
+    local hash = internalHash(k, 555);
+    tbl[hash]
   }
-  return put, get
-}
+  -- local i = 0; -- why we shouldn't declare 'i' here
+  -- for i := 0, i < size, i := i + 1 do tbl[i] := None od;
+  return [put, get]
+} }
+
+fun mkIntHashtblUntyped(sizeIgnored) { #NoTypecheck {
+  local size = 128;
+  fun internalHash(num, i) {
+    if i == 0 then return mod(num, size) fi;
+    mod(num - internalHash(num * 2, i - 1), size)
+  }
+  -- makearray is not working in interpretation mode
+  local tbl =
+              [
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,
+               None,None,None,None,None,None,None,None,None,None,None,None,None,None,None,None
+              ];
+  fun put(k, v) {
+    local hash = internalHash(k, 555);
+    tbl[hash] := Some(v)
+  }
+  fun get(k) {
+    local hash = internalHash(k, 555);
+    tbl[hash]
+  }
+  -- local i = 0; -- why we shouldn't declare 'i' here
+  -- for i := 0, i < size, i := i + 1 do tbl[i] := None od;
+  return [put, get]
+}}
 
 fun fibonacci(n :: Int) :: Int {
-    put, get := mkIntHashtbl(n)
-    fun memoFibonacci(k) {
-
+    local pg :: ? = mkIntHashtblTyped(n);
+    local put :: (Int, Int) -> ? = pg[0];
+    local get :: Int -> Union[Some(Int); None] = pg[1];
+    fun memoizedFibonacci(k :: Int) {
+        if k == 0 then return 0 elif k == 1 then return 1 elif k < 0 then return -1 fi;
+        case get(k) of
+          Some(x) -> return x
+        | None    -> local result = memoizedFibonacci(k-1) + memoizedFibonacci(k-2);
+                     put(k, result);
+                     return result
+        esac
     }
+    return memoizedFibonacci(n)
 }
+
+write(fibonacci(read()))

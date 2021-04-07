@@ -522,7 +522,7 @@ module Expr =
     (* pattern-matching           *) | Case      of Loc.t * t * (Pattern.t * t) list * atr
     (* return statement           *) | Return    of Loc.t * t option
     (* ignore a value             *) | Ignore    of Loc.t * t
-    (* entering the scope         *) | Scope     of Loc.t * (string * decl) list * t * scope_type
+    (* entering the scope         *) | Scope     of Loc.t * (string * decl) list * t * scope_type option
     (* lambda expression          *) | Lambda    of Loc.t * (string * Typing.t) list * t * Typing.t
     (* leave a scope              *) | Leave     of Loc.t
     (* intrinsic (for evaluation) *) | Intrinsic of Loc.t * (t config, t config) arrow
@@ -815,11 +815,13 @@ module Expr =
          Generate cast expression. Expression e is casted from 'expT' expected type to 'actT' actual type
          Note, that type of e and actT should accord, use type_check(_int) function to infer type of e
       *)
-      let genCast ?(desc="") l e actT expT =
-        Cast (l, e, expT, Printf.sprintf "%s (\"%s\" => \"%s\")" desc (printType actT) (printType expT), true)
+      let genCast genCasts ?(desc="") l e actT expT =
+        if genCasts
+        then Cast (l, e, expT, Printf.sprintf "%s (\"%s\" => \"%s\")" desc (printType actT) (printType expT), true)
+        else e
 
       let type_check ctx expr =
-        let rec type_check_int ret_ht ctx expr
+        let rec type_check_int ret_ht ctx ?(genCasts=true)expr
           =
             (* Logger.add_warning ~loc:(Some (exprLoc expr)) (Printf.sprintf "TYPING EXPR=%s\nIN CONTEXT=%s" (printType expr) (printType ctx)); *)
             match expr with
@@ -842,8 +844,8 @@ module Expr =
                                           then report_error ~loc:(Some l) @@ Printf.sprintf "right binary operand of type \"%s\" does not conforms to \"%s\"" (printType t2) (printType TConst)
                                           else
                                           (* Already checked conformity, so we can safely match with 'Some' value *)
-                                          let cst_e1 = genCast ~desc:"left operand cast fail" l e1 t1 TConst in
-                                          let cst_e2 = genCast ~desc:"right operand cast fail"l e2 t2 TConst in
+                                          let cst_e1 = genCast genCasts ~desc:"left operand cast fail" l e1 t1 TConst in
+                                          let cst_e2 = genCast genCasts ~desc:"right operand cast fail"l e2 t2 TConst in
                                           TConst, Binop(l, op, cst_e1, cst_e2)
             | ElemRef (l, arr, index)  (* Both value and reference versions are typed the same way... *)
             | Elem (l, arr, index)     ->
@@ -852,7 +854,7 @@ module Expr =
                                        if conforms t_index TConst
                                        then
                                          (* Cast index to integer and repack AST *)
-                                         let e_index_cst = genCast ~desc:"index cast fail" l e_index t_index TConst in
+                                         let e_index_cst = genCast genCasts~desc:"index cast fail" l e_index t_index TConst in
                                          let tRefWrapper, repacked_ast = match expr with
                                              | ElemRef (l, arr, index) -> (fun(t) -> TRef(t)), ElemRef(l, arr, e_index_cst)
                                              | Elem    (l, arr, index) -> (fun(t) -> t      ), Elem   (l, arr, e_index_cst)
@@ -885,7 +887,7 @@ module Expr =
                                               with Invalid_argument(_) -> report_error ~loc:(Some l) ("Arity mismatch in function call") (* TODO NO VARIADIC SUPPORT *)
                                            then (* In 'then' branch each expression from t_args conform to the premise of function *)
                                              (* Step 1. cast all arguments to the input type of the function *)
-                                             let cast_args = List.map2 (fun (exp, tExp) tAct -> genCast ~desc:"arg cast fail" l exp tExp tAct)
+                                             let cast_args = List.map2 (fun (exp, tExp) tAct -> genCast genCasts ~desc:"arg cast fail" l exp tExp tAct)
                                                                        (List.combine acc_args t_args) premise in
                                                     acc_f, cast_args, conclusion
                                            else begin
@@ -912,7 +914,7 @@ module Expr =
                                        (* Step 2. then perform call of the function *)
                                        let call_func = Call(l, ast_f, ast_args) in
                                        (* Step 3. cast result of the function to the resulting type (TODO check that should never happen) *)
-                                       let resExpr = genCast ~desc:"func result cast fail" l call_func TAny resType in
+                                       let resExpr = genCast genCasts ~desc:"func result cast fail" l call_func TAny resType in
                                        resType, resExpr
 
             | Assign(_, reff, exp)  -> let t_reff, e_reff = type_check_int ret_ht ctx reff in
@@ -924,7 +926,7 @@ module Expr =
                                          | TRef (t_x) ->
                                              if conforms t_exp t_x
                                              then
-                                               let e_exp_cst = genCast ~desc:"assignment cast failed" l e_exp t_exp t_x in
+                                               let e_exp_cst = genCast genCasts ~desc:"assignment cast failed" l e_exp t_exp t_x in
                                                t_x, Assign(l, e_reff, e_exp_cst)
                                              else report_error ~loc:(Some l) "cannot assign a value with inappropriate type"
                                        in ret
@@ -938,7 +940,7 @@ module Expr =
                                        let t_rbr,  e_rbr  = type_check_int ret_ht ctx rbr  in
                                        if conforms t_cond TConst
                                        then
-                                         let e_cond_cst = genCast ~desc:"if condition didn't evaluate to boolean" (exprLoc cond) e_cond t_cond TConst in
+                                         let e_cond_cst = genCast genCasts ~desc:"if condition didn't evaluate to boolean" (exprLoc cond) e_cond t_cond TConst in
                                          union_contraction (TUnion(t_lbr :: t_rbr :: []))
                                          , If(l, e_cond_cst, e_lbr, e_rbr)
                                        else report_error ~loc:(Some l) (Printf.sprintf "if condition should be \"%s\", but given type \"%s\"" (printType TConst) (printType t_cond))
@@ -947,7 +949,7 @@ module Expr =
                                        let t_body, e_body = type_check_int ret_ht ctx body in
                                        if conforms t_cond TConst
                                        then
-                                         let e_cond_cst = genCast ~desc:"cycle condition didn't evaluate to boolean" (exprLoc cond) e_cond t_cond TConst in
+                                         let e_cond_cst = genCast genCasts ~desc:"cycle condition didn't evaluate to boolean" (exprLoc cond) e_cond t_cond TConst in
                                          let repacked_ast = match expr with
                                          | While (ll, cond, body) -> While (ll, e_cond_cst, e_body)
                                          | Repeat(ll, body, cond) -> Repeat(ll, e_body, e_cond_cst)
@@ -1001,11 +1003,14 @@ module Expr =
             (* decided, that Scope does not affect structure of the AST *)
             | Scope(l, decls, expr, scope_type) ->
                             begin
+                              (* Define cast generation for this scope *)
+                              let genCasts' = (match scope_type with | Some GradualTyping -> true | Some _ -> false | None -> genCasts) in
                               match scope_type with
-                              | NoTypecheck -> TAny, expr (* leave expression alone with some type *)
-                              | StaticTypecheck -> report_error ~loc:(Some l) "Static typecheck only not implemented" (* TODO *)
-                              | GradualTyping ->
-
+                              | Some NoTypecheck -> TAny, Scope(l, decls, expr, scope_type) (* leave expression alone with some type *)
+                              (* For all other options, continue typechecking *)
+                              | Some StaticTypecheck
+                              | Some GradualTyping
+                              | None ->
                                        let get_expanded_layer_context_type ctx_layer name maybeType =
                                          let exp_ctx_layer = (match maybeType with
                                            | Some t -> Context.extend_layer ctx_layer name t
@@ -1026,7 +1031,7 @@ module Expr =
                                                       let sub_ret_ht = (TypeHsh.create 128) in (* Make fresh hashtable for returns in body *)
                                                       (* expand context and add new free variables in it *)
                                                       let freshFunContext = Context.expandWith (CtxLayer args) exp_ctx in
-                                                      let type_body, e_body =  type_check_int sub_ret_ht freshFunContext body; in
+                                                      let type_body, e_body =  type_check_int ~genCasts:genCasts' sub_ret_ht freshFunContext body; in
                                                       let union_types = Seq.fold_left (fun arr elm -> elm :: arr)
                                                                         [type_body] (TypeHsh.to_seq_keys sub_ret_ht) in
                                                       let l_ret_type = union_contraction (TUnion(union_types)) in
@@ -1059,7 +1064,7 @@ module Expr =
                                                                         (Printf.sprintf "Type usage is incompatible with previous type usage: \"%s\" => \"%s\"" (printType ancestorConcreteType) (printType definitelyType) )
                                                                     else acc_ext, e_decls (* Drop declaration to avoid confusion *)
                                                       | Some def ->
-                                                                    let t_def, e_def = type_check_int ret_ht exp_ctx def in
+                                                                    let t_def, e_def = type_check_int ~genCasts:genCasts' ret_ht exp_ctx def in
                                                                     if not (conforms t_def exp_type)
                                                                        then report_error ~loc:(Some (exprLoc expr)) (
                                                                          Printf.sprintf "Variable \"%s\" initialized with expression of type %s doesn't conforms declared type %s."
@@ -1074,7 +1079,7 @@ module Expr =
                                                                     )
                                                       )
                                            ) ((Context.CtxLayer []), []) decls in
-                                       let t_expr, e_expr = type_check_int ret_ht (Context.expandWith ctx_layer ctx) expr in
+                                       let t_expr, e_expr = type_check_int ~genCasts:genCasts' ret_ht (Context.expandWith ctx_layer ctx) expr in
                                        t_expr, Scope(l, List.rev e_decls, e_expr, scope_type)
                             end
             | Lambda(l, args, body, retType) ->  (* collect return yielding types and join with this type with TUnion *)
@@ -1386,7 +1391,7 @@ module Expr =
       let def s   = let Some def = Obj.magic !defCell in def s in
       let ostap (
       parse[infix][atr]: h:basic[infix][Void] l:$ -";" t:parse[infix][atr] {Seq (l#coord, h, t)} | basic[infix][atr];
-      scope[infix][atr]: l:$ <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (l#coord, d, expr, GradualTyping)} | {isVoid atr} => l:$ <(d, infix')> : def[infix] => {d <> []} => {Scope (l#coord, d, materialize atr (Skip l#coord), GradualTyping)};
+      scope[infix][atr]: l:$ <(d, infix')> : def[infix] expr:parse[infix'][atr] {Scope (l#coord, d, expr, None)} | {isVoid atr} => l:$ <(d, infix')> : def[infix] => {d <> []} => {Scope (l#coord, d, materialize atr (Skip l#coord), None)};
       basic[infix][atr]: !(expr (fun x -> x) (Array.map (fun (a, (atr, l)) -> a, (atr, List.map (fun (s, _, f) -> ostap (- $(s)), f) l)) infix) (primary infix) atr);
       primary[infix][atr]:
           s:(l:$ s:"-"? {match s with None -> fun x -> x | _ -> fun x -> Binop (l#coord, "-", Const (l#coord, 0), x)})
@@ -1491,12 +1496,14 @@ module Expr =
               args
               ([], [], body)
           in
-          ignore atr (Lambda (l#coord, args, Scope (l#coord, defs, body, GradualTyping), Option.value ~default:(Typing.TAny) retType))
+          ignore atr (Lambda (l#coord, args, Scope (l#coord, defs, body, None), Option.value ~default:(Typing.TAny) retType))
       }
 
       | l:$ "[" es:!(Util.list0)[parse infix Val] "]" => {notRef atr} :: (not_a_reference l) => {ignore atr (Array (l#coord, es))}
       | -"{" scope[infix][atr] -"}"
-      | l:$ -"#NoTypecheck" -"{" s:scope[infix][atr] -"}" {match s with | Scope(loc, defs, body, _) -> Scope(loc, defs, body, NoTypecheck) | e -> Scope(l#coord, [], e, NoTypecheck)}
+      | l:$ -"#NoTypecheck"     -"{" s:scope[infix][atr] -"}" {match s with | Scope(loc, defs, body, _) -> Scope(loc, defs, body, Some NoTypecheck)     | e -> Scope(l#coord, [], e, Some NoTypecheck    )}
+      | l:$ -"#StaticTypecheck" -"{" s:scope[infix][atr] -"}" {match s with | Scope(loc, defs, body, _) -> Scope(loc, defs, body, Some StaticTypecheck) | e -> Scope(l#coord, [], e, Some StaticTypecheck)}
+      | l:$ -"#GradualTyping"   -"{" s:scope[infix][atr] -"}" {match s with | Scope(loc, defs, body, _) -> Scope(loc, defs, body, Some GradualTyping)   | e -> Scope(l#coord, [], e, Some GradualTyping  )}
       | l:$ "{" es:!(Util.list0)[parse infix Val] "}" => {notRef atr} :: (not_a_reference l) => {ignore atr (match es with
                                                                                       | [] -> Const (l#coord, 0)
                                                                                       | _  -> List.fold_right (fun x acc -> Sexp (l#coord, "cons", [x; acc])) es (Const (l#coord, 0)))
@@ -1539,7 +1546,7 @@ module Expr =
                    defs
                    ([], s)
                in
-               Scope (l, defs, Repeat (l, s, e), GradualTyping)
+               Scope (l, defs, Repeat (l, s, e), None)
             | _  -> Repeat (exprLoc s, s, e)
       }
       | %"return" l:$ e:basic[infix][Val]? => {isVoid atr} => {Return (l#coord, e)}
@@ -1859,7 +1866,7 @@ module Definition =
                 ([], [], body)
             in
             (* if 'typ' is None, well then, it will be inferred from the body *)
-            [(name, (m, typ, `Fun (args, Expr.Scope (l#coord, defs, body, GradualTyping))))], infix'
+            [(name, (m, typ, `Fun (args, Expr.Scope (l#coord, defs, body, None))))], infix'
          } |
          l:$ ";" {
            (* interpret none as TAny *)
@@ -1992,7 +1999,7 @@ ostap (
 };
 
 (* Workaround until Ostap starts to memoize properly *)
-    constparse[cmd]: <(is, infix)> : imports[cmd] l:$ d:!(Definition.constdef) {(is, []), Expr.Scope (l#coord, d, Expr.materialize Expr.Weak (Expr.Skip (0, 0)), Expr.GradualTyping)}
+    constparse[cmd]: <(is, infix)> : imports[cmd] l:$ d:!(Definition.constdef) {(is, []), Expr.Scope (l#coord, d, Expr.materialize Expr.Weak (Expr.Skip (0, 0)), None)}
 (* end of the workaround *)
 )
 
@@ -2039,7 +2046,7 @@ let parse cmd =
         <(d, infix')> : definitions[infix]
         le:$ expr:expr[infix'][Expr.Weak]? {
             let scopeBody = match expr with None -> Expr.materialize Expr.Weak (Expr.Skip le#coord) | Some e -> e in
-            (env#get_imports @ is, Infix.extract_exports infix'), Expr.Scope (Expr.exprLoc scopeBody, d, scopeBody, Expr.GradualTyping)
+            (env#get_imports @ is, Infix.extract_exports infix'), Expr.Scope (Expr.exprLoc scopeBody, d, scopeBody, Some Expr.GradualTyping)
           }
         )
   in

@@ -1,0 +1,12 @@
+-- the same example as previous, but not cached
+#NoTypecheck {
+fun fibonacci(k) {
+    if k == 0 then return 0
+    elif k == 1 then return 1
+    elif k < 0 then return -1
+    else return fibonacci(k-1) + fibonacci(k-2)
+    fi
+}
+
+write(fibonacci(read()))
+}
